@@ -53,13 +53,31 @@ class MainWidget:
         self.seg_layout = qt.QVBoxLayout(self.seg_box)
 
         self.create_seg_btn = qt.QPushButton("Create New Segmentation")
+        self.create_seg_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #007acc;
+                color: white;
+                padding: 8px;
+                border: none;
+                border-radius: 6px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #0098ff;
+            }
+            QPushButton:pressed {
+                background-color: #005999;
+            }
+        """)
         self.seg_layout.addWidget(self.create_seg_btn)
 
-        self.export_seg_btn = qt.QPushButton("Export & Upload to Orthanc")
+        self.export_seg_btn = qt.QPushButton("Save Segmentation")
         self.seg_layout.addWidget(self.export_seg_btn)
 
-        self.seg_status_label = qt.QLabel("Unsaved Changes: False")
-        self.seg_layout.addWidget(self.seg_status_label)
+        self.has_unsaved_changes = False
+        
+        self.update_save_button_state()
 
         self.layout.addStretch(1)
 
@@ -68,3 +86,36 @@ class MainWidget:
         self.studies_box.enabled = True
         self.studies_box.collapsed = False
         self.studies_widget.on_refresh_clicked()
+
+
+    def update_save_button_state(self):
+        if self.has_unsaved_changes:
+            self.export_seg_btn.enabled = True
+            self.export_seg_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #ffb74d;
+                    color: white;
+                    padding: 8px;
+                    border: none;
+                    border-radius: 6px;
+                    font-weight: bold;
+                    font-size: 11px;
+                }
+                QPushButton:hover {
+                    background-color: #ffa726;
+                }
+                QPushButton:pressed {
+                    background-color: #e65100;
+                }
+            """)
+        else:
+            self.export_seg_btn.enabled = False
+            self.export_seg_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #999999;
+                    color: white;
+                    padding: 8px;
+                    border-radius: 6px;
+                    font-size: 11px;
+                }
+            """)

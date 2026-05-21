@@ -43,7 +43,7 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         # Initialize the dispatcher on the main thread so its QTimer is bound to Slicer's main event loop
         MainThreadDispatcher.get_instance()
 
-        self.segmentation_service = SegmentationService()
+        self.segmentation_service = SegmentationService(self.onSegmentationChanged)
         self.export_service = ExportService(self.segmentation_service)
         
         self.local_bridge_server = LocalBridgeServer(self.mainWidget)
@@ -53,17 +53,65 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.mainWidget.create_seg_btn.connect("clicked()", self.onCreateSegmentationClicked)
         self.mainWidget.export_seg_btn.connect("clicked()", self.onExportClicked)
 
+    def onSegmentationChanged(self, has_unsaved_changes):
+        self.mainWidget.has_unsaved_changes = has_unsaved_changes
+        self.mainWidget.update_save_button_state()
+
     def onCreateSegmentationClicked(self):
         self.segmentation_service.create_segmentation()
-        self.mainWidget.seg_status_label.setText("Unsaved Changes: True")
+        self.onSegmentationChanged(True)
 
     def onExportClicked(self):
-        self.mainWidget.seg_status_label.setText("Exporting...")
+        self.mainWidget.export_seg_btn.setText("Exporting...")
+        self.mainWidget.export_seg_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ef6c00;
+                color: white;
+                padding: 8px;
+                border: none;
+                border-radius: 6px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+        """)
+        self.mainWidget.export_seg_btn.enabled = False
+
         def on_complete(success, message):
-            self.mainWidget.seg_status_label.setText(f"Status: {message}")
             if success:
-                # Update label since we cleared unsaved changes
-                pass
+                # Success state
+                self.mainWidget.export_seg_btn.setText("Uploaded Successfully")
+                self.mainWidget.export_seg_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #2e7d32;
+                        color: white;
+                        padding: 8px;
+                        border: none;
+                        border-radius: 6px;
+                        font-weight: bold;
+                        font-size: 11px;
+                    }
+                """)
+                # Clear unsaved changes
+                self.onSegmentationChanged(False)
+                
+                # Reset button after 5 seconds
+                qt.QTimer.singleShot(5000, self.reset_export_button)
+            else:
+                self.mainWidget.export_seg_btn.setText("Export Failed")
+                self.mainWidget.export_seg_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #c62828;
+                        color: white;
+                        padding: 8px;
+                        border: none;
+                        border-radius: 6px;
+                        font-weight: bold;
+                        font-size: 11px;
+                    }
+                """)
+                # Reset button after 5 seconds on failure to allow retry
+                qt.QTimer.singleShot(5000, self.reset_export_button)
+
         self.export_service.export_and_upload(on_complete)
 
     def cleanup(self):
@@ -72,6 +120,10 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         if hasattr(self, 'segmentation_service'):
             self.segmentation_service.observer_manager.remove_all()
         self.removeObservers()
+
+    def reset_export_button(self):
+        self.mainWidget.export_seg_btn.setText("Save Segmentation")
+        self.mainWidget.update_save_button_state()
 
 class RadpretationToolsLogic(ScriptedLoadableModuleLogic):
     def __init__(self):
