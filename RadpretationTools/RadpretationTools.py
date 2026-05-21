@@ -73,6 +73,10 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
                 font-weight: bold;
                 font-size: 11px;
             }
+            QPushButton:disabled {
+                background-color: #ef6c00;
+                color: white;
+            }
         """)
         self.mainWidget.export_seg_btn.enabled = False
 
@@ -82,7 +86,7 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
                 self.mainWidget.export_seg_btn.setText("Uploaded Successfully")
                 self.mainWidget.export_seg_btn.setStyleSheet("""
                     QPushButton {
-                        background-color: #2e7d32;
+                        background-color: #009600;
                         color: white;
                         padding: 8px;
                         border: none;
@@ -90,9 +94,14 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
                         font-weight: bold;
                         font-size: 11px;
                     }
+                    QPushButton:disabled {
+                        background-color: #009600;
+                        color: white;
+                    }
                 """)
-                # Clear unsaved changes
-                self.onSegmentationChanged(False)
+                # Set local state directly to prevent immediate grey reset
+                self.mainWidget.has_unsaved_changes = False
+                self.mainWidget.export_seg_btn.enabled = False
                 
                 # Reset button after 5 seconds
                 qt.QTimer.singleShot(5000, self.reset_export_button)
@@ -107,6 +116,10 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
                         border-radius: 6px;
                         font-weight: bold;
                         font-size: 11px;
+                    }
+                    QPushButton:disabled {
+                        background-color: #c62828;
+                        color: white;
                     }
                 """)
                 # Reset button after 5 seconds on failure to allow retry
