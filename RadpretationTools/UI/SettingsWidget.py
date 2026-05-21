@@ -76,10 +76,10 @@ class SettingsWidget(qt.QWidget):
         self.status_label.setText("Settings saved successfully!")
         self.status_label.setStyleSheet("color: #4CAF50;") # Green color
         
-        try:
-            import slicer
-            slicer.util.delayDisplay("PACS settings saved.", 2000)
-        except ImportError:
-            pass
-            
-        qt.QTimer.singleShot(3000, lambda: self.status_label.setText(""))
+        # Close parent QDialog after 5 seconds
+        parent = self.parent()
+        while parent:
+            if isinstance(parent, qt.QDialog):
+                qt.QTimer.singleShot(1000, parent.accept)
+                break
+            parent = parent.parent()

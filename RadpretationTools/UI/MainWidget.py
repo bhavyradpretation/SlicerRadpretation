@@ -58,7 +58,7 @@ class MainWidget:
         
         # --- Web Platform Studies ---
         self.studies_box = ctk.ctkCollapsibleButton()
-        self.studies_box.text = "Web Platform Studies"
+        self.studies_box.text = "Studies"
         self.studies_box.collapsed = True
         self.studies_box.enabled = False # Enabled after login
         self.layout.addWidget(self.studies_box)
