@@ -7,7 +7,7 @@ class StudyModel:
     patient_id: str
     study_instance_uid: str
     study_date: str
-    study_description: str
+    currentReviewer: str
     accession_number: str
     modalities: str
     series: List[Any] = field(default_factory=list)

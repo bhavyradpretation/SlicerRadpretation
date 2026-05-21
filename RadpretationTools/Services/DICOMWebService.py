@@ -45,7 +45,7 @@ class DICOMWebService:
                 patient_name=DICOMWebService._get_dicom_value(s, "00100010", "Unknown"),
                 patient_id=DICOMWebService._get_dicom_value(s, "00100020", "Unknown"),
                 study_date=DICOMWebService._get_dicom_value(s, "00080020", ""),
-                study_description=DICOMWebService._get_dicom_value(s, "00081030", ""),
+                currentReviewer=DICOMWebService._get_dicom_value(s, "00081030", ""),
                 accession_number=DICOMWebService._get_dicom_value(s, "00080050", ""),
                 study_instance_uid=DICOMWebService._get_dicom_value(s, "0020000D", study_uid),
                 modalities=DICOMWebService._get_dicom_value(s, "00080061", "")

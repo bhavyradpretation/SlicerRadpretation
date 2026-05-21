@@ -5,6 +5,8 @@ import slicer
 from UI.ViewerWidget import ViewerWidget
 from UI.ToolbarWidget import ToolbarWidget
 from UI.SettingsWidget import SettingsWidget
+from UI.LoginWidget import LoginWidget
+from UI.StudiesWidget import StudiesWidget
 from Utils.logger import logger
 
 class MainWidget:
@@ -26,6 +28,24 @@ class MainWidget:
         self.settings_widget = SettingsWidget()
         settings_layout.addWidget(self.settings_widget)
         
+        # --- Web Platform Login ---
+        self.login_box = ctk.ctkCollapsibleButton()
+        self.login_box.text = "Web Platform Login"
+        self.layout.addWidget(self.login_box)
+        login_layout = qt.QVBoxLayout(self.login_box)
+        self.login_widget = LoginWidget(on_login_success=self.on_login_success)
+        login_layout.addWidget(self.login_widget)
+        
+        # --- Web Platform Studies ---
+        self.studies_box = ctk.ctkCollapsibleButton()
+        self.studies_box.text = "Web Platform Studies"
+        self.studies_box.collapsed = True
+        self.studies_box.enabled = False # Enabled after login
+        self.layout.addWidget(self.studies_box)
+        studies_layout = qt.QVBoxLayout(self.studies_box)
+        self.studies_widget = StudiesWidget()
+        studies_layout.addWidget(self.studies_widget)
+        
         # --- Segmentation Actions (to be populated by services) ---
         self.seg_box = ctk.ctkCollapsibleButton()
         self.seg_box.text = "Segmentation Workflow"
@@ -42,3 +62,9 @@ class MainWidget:
         self.seg_layout.addWidget(self.seg_status_label)
 
         self.layout.addStretch(1)
+
+    def on_login_success(self):
+        self.login_box.collapsed = True
+        self.studies_box.enabled = True
+        self.studies_box.collapsed = False
+        self.studies_widget.on_refresh_clicked()

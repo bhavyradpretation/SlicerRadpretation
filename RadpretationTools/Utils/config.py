@@ -23,6 +23,15 @@ class ConfigManager:
         self.settings.setValue("Radpretation/PACS_URL", value)
 
     @property
+    def web_api_url(self):
+        return self.settings.value("Radpretation/WebAPI_URL", "http://localhost:8000")
+
+    @web_api_url.setter
+    def web_api_url(self, value):
+        self.settings.setValue("Radpretation/WebAPI_URL", value)
+
+
+    @property
     def dicomweb_path(self):
         return self.settings.value("Radpretation/DICOMWebPath", "/dicom-web")
 
