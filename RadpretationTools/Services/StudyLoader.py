@@ -228,7 +228,12 @@ class StudyLoader:
                     logger.warning("Could not find imported series in Slicer DB to auto-load.")
             
             # Ensure our module is active if not already
-            if slicer.app.moduleManager().activeModule != "RadpretationTools":
+            try:
+                current_module = slicer.modules.moduleSelector().selectedModule
+            except Exception:
+                current_module = None
+                
+            if current_module != "RadpretationTools":
                 slicer.util.selectModule("RadpretationTools")
             
             if completion_callback:
