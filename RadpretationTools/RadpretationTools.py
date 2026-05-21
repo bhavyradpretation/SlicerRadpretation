@@ -92,6 +92,7 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             if existing_container:
                 self.segmentEditorSaveBtn = existing_container.findChild(qt.QPushButton, "RadpretationSaveSegButton")
                 self.segmentEditorBackBtn = existing_container.findChild(qt.QPushButton, "RadpretationBackToRadButton")
+                self.segmentEditorCreateBtn = existing_container.findChild(qt.QPushButton, "RadpretationCreateSegButton")
                 return
 
             # Create container widget and horizontal layout
@@ -124,6 +125,29 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             self.segmentEditorBackBtn.connect("clicked()", self.onBackToRadpretationClicked)
             buttons_layout.addWidget(self.segmentEditorBackBtn, 2)
 
+            # Create the Create New Segmentation button
+            self.segmentEditorCreateBtn = qt.QPushButton("Create Segmentation")
+            self.segmentEditorCreateBtn.setObjectName("RadpretationCreateSegButton")
+            self.segmentEditorCreateBtn.setStyleSheet("""
+                QPushButton {
+                    background-color: #007acc;
+                    color: white;
+                    padding: 8px;
+                    border: none;
+                    border-radius: 6px;
+                    font-weight: bold;
+                    font-size: 11px;
+                }
+                QPushButton:hover {
+                    background-color: #0098ff;
+                }
+                QPushButton:pressed {
+                    background-color: #005999;
+                }
+            """)
+            self.segmentEditorCreateBtn.connect("clicked()", self.onCreateSegmentationClicked)
+            buttons_layout.addWidget(self.segmentEditorCreateBtn, 3)
+
             # Create the Save button
             self.segmentEditorSaveBtn = qt.QPushButton("Save Segmentation")
             self.segmentEditorSaveBtn.setObjectName("RadpretationSaveSegButton")
@@ -136,11 +160,11 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             layout = segmentEditorWidget.layout()
             if layout:
                 layout.addWidget(container)
-                logger.info("Successfully added Save & Back controls to Segment Editor")
+                logger.info("Successfully added Save, Create & Back controls to Segment Editor")
             else:
                 logger.warning("Segment Editor layout not found")
         except Exception as e:
-            logger.error(f"Failed to add save and back controls to Segment Editor: {e}")
+            logger.error(f"Failed to add save, create and back controls to Segment Editor: {e}")
 
     def onModuleAboutToBeSelected(self, moduleName):
         if moduleName == "SegmentEditor":

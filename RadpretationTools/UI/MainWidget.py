@@ -88,13 +88,10 @@ class MainWidget:
         self.studies_widget = StudiesWidget()
         studies_layout.addWidget(self.studies_widget)
         
-        # --- Segmentation Actions (to be populated by services) ---
-        self.seg_box = ctk.ctkCollapsibleButton()
-        self.seg_box.text = "Segmentation Workflow"
-        self.layout.addWidget(self.seg_box)
-        self.seg_layout = qt.QVBoxLayout(self.seg_box)
-
-        self.create_seg_btn = qt.QPushButton("Create New Segmentation")
+        # --- Segmentation Actions ---
+        # Note: These buttons are only displayed inside Slicer's Segment Editor panel to keep the main plugin UI clean and focused.
+        # We still create the widgets logically here to maintain complete state synchronization across files.
+        self.create_seg_btn = qt.QPushButton("Create Segmentation")
         self.create_seg_btn.setStyleSheet("""
             QPushButton {
                 background-color: #007acc;
@@ -112,10 +109,9 @@ class MainWidget:
                 background-color: #005999;
             }
         """)
-        self.seg_layout.addWidget(self.create_seg_btn)
+        self.layout.addWidget(self.create_seg_btn)
 
         self.export_seg_btn = qt.QPushButton("Save Segmentation")
-        self.seg_layout.addWidget(self.export_seg_btn)
 
         self.has_unsaved_changes = False
         
