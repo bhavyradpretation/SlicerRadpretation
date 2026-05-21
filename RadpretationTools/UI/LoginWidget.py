@@ -47,7 +47,8 @@ class LoginWidget(qt.QWidget):
 
     def load_settings(self):
         self.url_edit.setText(config.web_api_url)
-        # Maybe remember email in settings? Not for now, unless requested.
+        self.email_edit.setText(config.web_email)
+        self.password_edit.setText(config.web_password)
 
     def on_login_clicked(self):
         url = self.url_edit.text.strip()
@@ -71,6 +72,8 @@ class LoginWidget(qt.QWidget):
         self.login_btn.setEnabled(True)
         
         if success:
+            config.web_email = email
+            config.web_password = password
             self.show_status(message, error=False)
             if self.on_login_success:
                 self.on_login_success()
