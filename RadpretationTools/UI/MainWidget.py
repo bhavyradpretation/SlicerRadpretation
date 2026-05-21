@@ -32,6 +32,28 @@ class MainWidget:
         
         self.header_layout.addStretch(1)
         
+        # Restart Slicer Button
+        self.restart_btn = qt.QPushButton("↺")
+        self.restart_btn.setToolTip("Restart Slicer")
+        self.restart_btn.setFixedSize(30, 30)
+        self.restart_btn.setFont(qt.QFont("Arial", 11, qt.QFont.Bold))
+        self.restart_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #333333;
+                color: #ffffff;
+                border: 1px solid #555555;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #444444;
+            }
+            QPushButton:pressed {
+                background-color: #222222;
+            }
+        """)
+        self.restart_btn.clicked.connect(self.on_restart_clicked)
+        self.header_layout.addWidget(self.restart_btn)
+        
         # PACS Settings Icon Button
         self.settings_btn = qt.QPushButton("⚙")
         self.settings_btn.setToolTip("PACS Settings")
@@ -215,6 +237,10 @@ class MainWidget:
         dialog_layout.addWidget(settings_widget)
         settings_dialog.exec_()
 
+
+    def on_restart_clicked(self):
+        logger.info("Restarting 3D Slicer...")
+        slicer.app.restart()
 
     def update_save_button_state(self):
         if self.has_unsaved_changes:
