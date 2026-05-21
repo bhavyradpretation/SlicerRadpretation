@@ -41,6 +41,8 @@ class LocalBridgeRequestHandler(BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(parsed_path.query)
             study_uid = query.get('studyInstanceUID', [None])[0]
             
+            auth_header = self.headers.get('Authorization')
+            
             if not study_uid:
                 self._send_error(400, "Missing studyInstanceUID parameter")
                 return
@@ -52,7 +54,7 @@ class LocalBridgeRequestHandler(BaseHTTPRequestHandler):
             # Offload to main thread for Slicer safety
             if self.ui_callback:
                 from Utils.helpers import MainThreadDispatcher
-                MainThreadDispatcher.get_instance().dispatch(self.ui_callback, study_uid)
+                MainThreadDispatcher.get_instance().dispatch(self.ui_callback, study_uid, auth_header)
         else:
             self._send_error(404, "Not Found")
 
@@ -106,14 +108,14 @@ class LocalBridgeServer:
             self.server = None
             logger.info("Local Bridge Server stopped.")
 
-    def handle_open_study_request(self, study_uid):
+    def handle_open_study_request(self, study_uid, auth_header=None):
         """Called on the main Qt thread when the frontend requests a study."""
         self.main_widget.seg_status_label.setText(f"Resolving Study {study_uid}...")
         
         # We need to find the study model from DICOMweb first
         def resolve_and_load():
             try:
-                target_study = self.dicom_service.fetch_study(study_uid)
+                target_study = self.dicom_service.fetch_study(study_uid, auth_header=auth_header)
                 
                 if target_study:
                     def on_progress(percent, message):
@@ -135,6 +137,7 @@ class LocalBridgeServer:
                     MainThreadDispatcher.get_instance().dispatch(
                         self.study_loader.load_study_remote,
                         study_model=target_study,
+                        auth_header=auth_header,
                         progress_callback=on_progress,
                         completion_callback=on_complete
                     )

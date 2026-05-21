@@ -23,6 +23,15 @@ class ConfigManager:
         self.settings.setValue("Radpretation/PACS_URL", value)
 
     @property
+    def web_api_url(self):
+        return self.settings.value("Radpretation/WebAPI_URL", "http://localhost:8000")
+
+    @web_api_url.setter
+    def web_api_url(self, value):
+        self.settings.setValue("Radpretation/WebAPI_URL", value)
+
+
+    @property
     def dicomweb_path(self):
         return self.settings.value("Radpretation/DICOMWebPath", "/dicom-web")
 
@@ -70,9 +79,28 @@ class ConfigManager:
 
     def get_requests_kwargs(self):
         """Returns kwargs to unpack into requests calls (e.g. auth)."""
+        kwargs = {}
         if self.auth_mode == "Basic Auth" and self.username:
-            return {"auth": (self.username, self.password)}
-        return {}
+            kwargs["auth"] = (self.username, self.password)
+        
+        if self.web_token:
+            if "headers" not in kwargs:
+                kwargs["headers"] = {}
+            kwargs["headers"]["Authorization"] = self.web_token
+            
+        return kwargs
+
+    @property
+    def web_token(self):
+        # We don't want to persist the token across slicer restarts since it expires.
+        # Just store it in memory for the session.
+        if not hasattr(self, '_web_token'):
+            self._web_token = None
+        return self._web_token
+
+    @web_token.setter
+    def web_token(self, value):
+        self._web_token = value
 
 LOCAL_BRIDGE_PORT = 5000
 
