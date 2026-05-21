@@ -17,6 +17,15 @@ class RadpretationTools(ScriptedLoadableModule):
         self.parent.contributors = ["Bhavy Raheja"]
         self.parent.helpText = "Radpretation Advanced Workstation integration for 3D Slicer."
         self.parent.acknowledgementText = "Developed for Radpretation."
+        
+        # Auto-open module on startup when main window is ready
+        if not slicer.app.commandOptions().noMainWindow:
+            slicer.app.connect("startupCompleted()", self.autoOpenModule)
+
+    def autoOpenModule(self):
+        logger.info("Automatically selecting RadpretationTools module on startup")
+        slicer.util.selectModule("RadpretationTools")
+
 
 
 class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
