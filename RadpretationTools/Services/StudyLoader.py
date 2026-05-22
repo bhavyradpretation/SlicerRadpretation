@@ -46,6 +46,9 @@ class StudyLoader:
         """
         logger.info(f"Initiating remote load for study: {study_model.study_instance_uid}")
         
+        # Clean any old temporary DICOM files in the cache to free up disk space
+        self.cache_manager.clear_cache()
+        
         # We run the heavy downloading inside a background thread so UI doesn't freeze
         AsyncTaskRunner.run(
             task_func=self._download_study_worker,
@@ -157,6 +160,30 @@ class StudyLoader:
 
         logger.info(f"Download complete. Importing cache dir into Slicer: {cache_dir}")
         
+        # Clean all old radpretation segmentation nodes from the MRML scene
+        try:
+            logger.info("Cleaning up old Radpretation segmentation nodes...")
+            seg_nodes = slicer.util.getNodesByClass("vtkMRMLSegmentationNode")
+            for node in list(seg_nodes):
+                if "radpretation" in node.GetName().lower():
+                    logger.info(f"Removing old segmentation node: {node.GetName()}")
+                    slicer.mrmlScene.RemoveNode(node)
+                    
+            # Reset active segmentation state and save button state in the RadpretationTools module
+            widget_ref = None
+            if hasattr(slicer.modules, 'radpretationtools'):
+                widget_ref = slicer.modules.radpretationtools
+            elif hasattr(slicer.modules, 'RadpretationTools'):
+                widget_ref = slicer.modules.RadpretationTools
+                
+            if widget_ref:
+                widget = widget_ref.widgetRepresentation().self()
+                if hasattr(widget, 'segmentation_service') and widget.segmentation_service:
+                    widget.segmentation_service.active_segmentation_node = None
+                    widget.segmentation_service.mark_saved()
+        except Exception as e:
+            logger.error(f"Error cleaning up old segmentations: {e}")
+
         try:
             DICOMUtils.importDicom(cache_dir)
             logger.info("DICOM data imported to local Slicer database successfully.")
@@ -189,3 +216,11 @@ class StudyLoader:
             logger.error(f"Failed to load cached DICOM into Slicer: {e}")
             if completion_callback:
                 completion_callback(False)
+        finally:
+            # Clean up the unique cache directory for this study to prevent duplicate DICOM file accumulation
+            try:
+                if os.path.exists(cache_dir):
+                    shutil.rmtree(cache_dir)
+                    logger.info(f"Cleaned up temporary download directory: {cache_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to delete temporary cache directory {cache_dir}: {e}")
