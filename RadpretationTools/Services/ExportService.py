@@ -11,7 +11,6 @@ class ExportService:
     
     def __init__(self, segmentation_service):
         self.seg_service = segmentation_service
-        self.orthanc_client = OrthancClient()
 
     def export_and_upload(self, callback=None):
         seg_node = self.seg_service.get_active_segmentation()
@@ -66,18 +65,25 @@ class ExportService:
             
             logger.info(f"Export completed to {export_path}. Starting background upload...")
             
+            # Extract StudyInstanceUID to associate the upload properly
+            study_uid = self.seg_service.get_active_study_uid() if hasattr(self.seg_service, 'get_active_study_uid') else None
+            
             # Run the network upload in the background
             AsyncTaskRunner.run(
                 task_func=self._upload_worker,
                 callback=lambda success: self._on_upload_complete(success, export_path, export_dir, callback),
-                file_path=export_path
+                file_path=export_path,
+                study_uid=study_uid
             )
         except Exception as e:
             logger.error(f"Export failed: {e}")
             if callback: callback(False, f"Export failed: {e}")
 
-    def _upload_worker(self, file_path):
-        return self.orthanc_client.upload_dicom(file_path)
+    def _upload_worker(self, file_path, study_uid=None):
+        from Services.DICOMWebService import DICOMWebService
+        # study_uid is technically required by DICOMweb STOW-RS route, but Orthanc might accept it on the root endpoint. 
+        # But STOW-RS standard is POST /dicom-web/studies. DICOMWebService already uses /dicom-web/studies.
+        return DICOMWebService.upload_instance_stow_rs(study_uid, file_path)
 
     def _on_upload_complete(self, success, file_path, export_dir, callback):
         # Cleanup

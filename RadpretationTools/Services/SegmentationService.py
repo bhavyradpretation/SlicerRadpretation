@@ -5,10 +5,11 @@ from Utils.events import ObserverManager
 
 class SegmentationService:
     """Manages the Slicer Segment Editor workflow and tracks unsaved changes."""
-    def __init__(self):
+    def __init__(self, on_changed_callback=None):
         self.has_unsaved_changes = False
         self.active_segmentation_node = None
         self.observer_manager = ObserverManager()
+        self.on_changed_callback = on_changed_callback
 
     def create_segmentation(self):
         """Create a segmentation node and track its modifications."""
@@ -58,10 +59,14 @@ class SegmentationService:
         if not self.has_unsaved_changes:
             self.has_unsaved_changes = True
             logger.info("Segmentation edited. Unsaved changes set to True.")
+            if self.on_changed_callback:
+                self.on_changed_callback(True)
 
     def mark_saved(self):
         self.has_unsaved_changes = False
         logger.info("Segmentation saved. Unsaved changes cleared.")
+        if self.on_changed_callback:
+            self.on_changed_callback(False)
 
     def get_active_segmentation(self):
         return self.active_segmentation_node
