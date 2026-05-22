@@ -10,4 +10,5 @@ class StudyModel:
     currentReviewer: str
     accession_number: str
     modalities: str
+    status: str = ""
     series: List[Any] = field(default_factory=list)

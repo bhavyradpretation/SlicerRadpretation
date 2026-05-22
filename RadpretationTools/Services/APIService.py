@@ -41,26 +41,27 @@ class APIService:
             return False, str(e)
 
     @staticmethod
-    def fetch_reports(reviewer_id=None):
-        """Fetches a list of scan tests (studies) from the API."""
-        # Using a wide search to get reports, optionally filter by reviewer ID if needed, 
-        # but the prompt API uses reviewer=<id>. If we don't know it, we can leave it blank or get from token info.
-        # Actually, let's just make the request as close to the user's example as possible, 
-        # perhaps omitting reviewer if we don't have it, or parsing it from login response.
-        # Wait, the user's request URL:
-        # http://localhost:8000/api/scanTests?page=1&limit=10&sortBy=report.updatedAt&sortOrder=desc&patientName=&scanStartDate=&scanEndDate=&reportStatus=&reviewer=68ee18a8dd6eedf5e2538851&testId=
-        # We can just request without reviewer to get all, or we could have stored reviewer ID on login.
-        
-        # We will request the basic list for now.
-        url = f"{config.web_api_url.rstrip('/')}/api/scanTests?page=1&limit=50&sortBy=report.updatedAt&sortOrder=desc"
+    def fetch_reports(reviewer_id=None, page=1, limit=10, patient_name=""):
+        """Fetches a list of scan tests (studies) from the API with pagination and search."""
+        params = {
+            "page": page,
+            "limit": limit,
+            "sortBy": "report.updatedAt",
+            "sortOrder": "desc",
+            "patientName": patient_name
+        }
+        if reviewer_id:
+            params["reviewer"] = reviewer_id
+            
+        url = f"{config.web_api_url.rstrip('/')}/api/scanTests"
         
         headers = {}
         if config.web_token:
             headers["Authorization"] = config.web_token
 
         try:
-            logger.info(f"Fetching reports from {url}")
-            response = requests.get(url, headers=headers, timeout=10)
+            logger.info(f"Fetching reports from {url} with params {params}")
+            response = requests.get(url, headers=headers, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
             
@@ -77,29 +78,43 @@ class APIService:
                         reviewer = current_reviewer_list[0]
                         first_name = reviewer.get("firstName", "")
                         last_name = reviewer.get("lastName", "")
-
                         current_reviewer = f"{first_name} {last_name}".strip()
                     
-                    patient_name = f"{patient_info.get('firstName', '')} {patient_info.get('lastName', '')}".strip()
-                    if not patient_name:
-                        patient_name = "Unknown Patient"
+                    patient_name_val = f"{patient_info.get('firstName', '')} {patient_info.get('lastName', '')}".strip()
+                    if not patient_name_val:
+                        patient_name_val = "Unknown Patient"
+                    
+                    status_val = item.get("status", "")
                     
                     # StudyModel fields
                     study = StudyModel(
-                        patient_name=patient_name,
+                        patient_name=patient_name_val,
                         patient_id=patient_info.get("patientId", "Unknown"),
                         study_instance_uid=report_info.get("studyInstanceUID", ""),
                         study_date=item.get("createdAt", ""),
                         currentReviewer=current_reviewer,
                         accession_number=item.get("refNumber", ""),
-                        modalities=report_info.get("modality", "")
+                        modalities=report_info.get("modality", ""),
+                        status=status_val
                     )
                     
                     # Only add if it has a valid UID
                     if study.study_instance_uid:
                         studies.append(study)
                         
-                return True, studies
+                # Metadata parsing
+                meta = data["data"].get("meta", {})
+                total_pages = meta.get("totalPages", 1)
+                current_page = meta.get("currentPage", page)
+                
+                # Resilient fallback if meta is empty
+                if not meta:
+                    if len(items) < limit:
+                        total_pages = page
+                    else:
+                        total_pages = page + 1
+                        
+                return True, (studies, total_pages, current_page)
             else:
                 return False, data.get("message", "Failed to fetch reports")
         except requests.exceptions.RequestException as e:

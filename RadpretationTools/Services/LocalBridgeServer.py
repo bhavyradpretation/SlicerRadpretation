@@ -110,8 +110,23 @@ class LocalBridgeServer:
 
     def handle_open_study_request(self, study_uid, auth_header=None):
         """Called on the main Qt thread when the frontend requests a study."""
-        self.main_widget.seg_status_label.setText(f"Resolving Study {study_uid}...")
+        self.main_widget.export_seg_btn.setText("Resolving Study...")
+        self.main_widget.export_seg_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #007acc;
+                color: white;
+                padding: 8px;
+                border: none;
+                border-radius: 6px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+        """)
         
+        def reset_button_later():
+            self.main_widget.export_seg_btn.setText("Save Segmentation")
+            self.main_widget.update_save_button_state()
+
         # We need to find the study model from DICOMweb first
         def resolve_and_load():
             try:
@@ -121,17 +136,48 @@ class LocalBridgeServer:
                     def on_progress(percent, message):
                         from Utils.helpers import MainThreadDispatcher
                         MainThreadDispatcher.get_instance().dispatch(
-                            self.main_widget.seg_status_label.setText, 
-                            f"{message} ({percent}%)"
+                            self.main_widget.export_seg_btn.setText, 
+                            f"Loading: {percent}%"
                         )
                     
                     def on_complete(success):
                         from Utils.helpers import MainThreadDispatcher
-                        msg = "Study loaded successfully." if success else "Failed to load study."
+                        msg = "Study loaded." if success else "Load failed."
                         MainThreadDispatcher.get_instance().dispatch(
-                            self.main_widget.seg_status_label.setText, 
+                            self.main_widget.export_seg_btn.setText, 
                             msg
                         )
+                        if success:
+                            MainThreadDispatcher.get_instance().dispatch(
+                                self.main_widget.export_seg_btn.setStyleSheet,
+                                """
+                                QPushButton {
+                                    background-color: #2e7d32;
+                                    color: white;
+                                    padding: 8px;
+                                    border: none;
+                                    border-radius: 6px;
+                                    font-weight: bold;
+                                    font-size: 11px;
+                                }
+                                """
+                            )
+                        else:
+                            MainThreadDispatcher.get_instance().dispatch(
+                                self.main_widget.export_seg_btn.setStyleSheet,
+                                """
+                                QPushButton {
+                                    background-color: #c62828;
+                                    color: white;
+                                    padding: 8px;
+                                    border: none;
+                                    border-radius: 6px;
+                                    font-weight: bold;
+                                    font-size: 11px;
+                                }
+                                """
+                            )
+                        qt.QTimer.singleShot(5000, reset_button_later)
 
                     from Utils.helpers import MainThreadDispatcher
                     MainThreadDispatcher.get_instance().dispatch(
@@ -144,11 +190,46 @@ class LocalBridgeServer:
                 else:
                     from Utils.helpers import MainThreadDispatcher
                     MainThreadDispatcher.get_instance().dispatch(
-                        self.main_widget.seg_status_label.setText, 
-                        "Study not found in DICOMweb."
+                        self.main_widget.export_seg_btn.setText, 
+                        "Not found."
                     )
+                    MainThreadDispatcher.get_instance().dispatch(
+                        self.main_widget.export_seg_btn.setStyleSheet,
+                        """
+                        QPushButton {
+                            background-color: #c62828;
+                            color: white;
+                            padding: 8px;
+                            border: none;
+                            border-radius: 6px;
+                            font-weight: bold;
+                            font-size: 11px;
+                        }
+                        """
+                    )
+                    qt.QTimer.singleShot(5000, reset_button_later)
             except Exception as e:
                 logger.error(f"Error resolving study: {e}")
+                from Utils.helpers import MainThreadDispatcher
+                MainThreadDispatcher.get_instance().dispatch(
+                    self.main_widget.export_seg_btn.setText, 
+                    "Error."
+                )
+                MainThreadDispatcher.get_instance().dispatch(
+                    self.main_widget.export_seg_btn.setStyleSheet,
+                    """
+                    QPushButton {
+                        background-color: #c62828;
+                        color: white;
+                        padding: 8px;
+                        border: none;
+                        border-radius: 6px;
+                        font-weight: bold;
+                        font-size: 11px;
+                    }
+                    """
+                )
+                qt.QTimer.singleShot(5000, reset_button_later)
                 
         # Run resolution in background
         t = threading.Thread(target=resolve_and_load)

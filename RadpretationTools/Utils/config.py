@@ -30,6 +30,23 @@ class ConfigManager:
     def web_api_url(self, value):
         self.settings.setValue("Radpretation/WebAPI_URL", value)
 
+    @property
+    def web_email(self):
+        return self.settings.value("Radpretation/WebEmail", "")
+
+    @web_email.setter
+    def web_email(self, value):
+        self.settings.setValue("Radpretation/WebEmail", value)
+
+    @property
+    def web_password(self):
+        return self.settings.value("Radpretation/WebPassword", "")
+
+    @web_password.setter
+    def web_password(self, value):
+        self.settings.setValue("Radpretation/WebPassword", value)
+
+
 
     @property
     def dicomweb_path(self):
