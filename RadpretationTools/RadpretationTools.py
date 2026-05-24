@@ -71,6 +71,23 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         except Exception as e:
             logger.warning(f"Failed to connect to moduleManager: {e}")
 
+         # Add scene observers to detect study loading/unloading dynamically
+        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.NodeAddedEvent, self.onSceneChanged)
+        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.NodeRemovedEvent, self.onSceneChanged)
+        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneChanged)
+        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndImportEvent, self.onSceneChanged)
+
+        # Initial button visibility update based on current scene state
+        self.updateCreateSegmentationButtonVisibility()
+
+    def onSceneChanged(self, caller=None, event=None):
+        self.updateCreateSegmentationButtonVisibility()
+
+    def updateCreateSegmentationButtonVisibility(self):
+        if self.mainWidget and hasattr(self.mainWidget, 'create_seg_btn') and self.mainWidget.create_seg_btn:
+            has_volumes = slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLVolumeNode") > 0
+            self.mainWidget.create_seg_btn.setVisible(has_volumes)
+
     def onSegmentationChanged(self, has_unsaved_changes):
         self.mainWidget.has_unsaved_changes = has_unsaved_changes
         self.mainWidget.update_save_button_state()

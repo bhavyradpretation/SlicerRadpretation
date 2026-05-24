@@ -270,10 +270,9 @@ class StudyLoader:
             if completion_callback:
                 completion_callback(False)
         finally:
-            # Clean up the unique cache directory for this study to prevent duplicate DICOM file accumulation
-            try:
-                if os.path.exists(cache_dir):
-                    shutil.rmtree(cache_dir)
-                    logger.info(f"Cleaned up temporary download directory: {cache_dir}")
-            except Exception as e:
-                logger.warning(f"Failed to delete temporary cache directory {cache_dir}: {e}")
+            # We do NOT delete the temporary cache directory immediately because Slicer imports
+            # DICOM files by reference rather than copying them in many configurations.
+            # Deleting this directory would break Slicer's access to the loaded volume files
+            # and result in FileNotFoundError during subsequent operations like segmentation export.
+            # These files are safely cleaned up by self.cache_manager.clear_cache() on the next remote study load.
+            logger.info("Keeping temporary download directory intact for active Slicer session.")

@@ -78,19 +78,7 @@ class MainWidget:
         
         self.layout.addLayout(self.header_layout)
         
-        # --- Web Platform Studies ---
-        self.studies_box = ctk.ctkCollapsibleButton()
-        self.studies_box.text = "Studies"
-        self.studies_box.collapsed = True
-        self.studies_box.enabled = False # Enabled after login
-        self.layout.addWidget(self.studies_box)
-        studies_layout = qt.QVBoxLayout(self.studies_box)
-        self.studies_widget = StudiesWidget()
-        studies_layout.addWidget(self.studies_widget)
         
-        # --- Segmentation Actions ---
-        # Note: These buttons are only displayed inside Slicer's Segment Editor panel to keep the main plugin UI clean and focused.
-        # We still create the widgets logically here to maintain complete state synchronization across files.
         self.create_seg_btn = qt.QPushButton("Create Segmentation")
         self.create_seg_btn.setStyleSheet("""
             QPushButton {
@@ -109,7 +97,22 @@ class MainWidget:
                 background-color: #005999;
             }
         """)
+        self.create_seg_btn.setVisible(False) # Hidden by default until study is loaded
         self.layout.addWidget(self.create_seg_btn)
+        
+        # --- Web Platform Studies ---
+        self.studies_box = ctk.ctkCollapsibleButton()
+        self.studies_box.text = "Studies"
+        self.studies_box.collapsed = True
+        self.studies_box.enabled = False # Enabled after login
+        self.layout.addWidget(self.studies_box)
+        studies_layout = qt.QVBoxLayout(self.studies_box)
+        self.studies_widget = StudiesWidget()
+        studies_layout.addWidget(self.studies_widget)
+        
+        # --- Segmentation Actions (Logical / Segment Editor) ---
+        # Note: Save Segmentation button is only displayed inside Slicer's Segment Editor panel to keep the main plugin UI clean and focused.
+        # We still create the widget logically here to maintain complete state synchronization across files.
 
         self.export_seg_btn = qt.QPushButton("Save Segmentation")
 
