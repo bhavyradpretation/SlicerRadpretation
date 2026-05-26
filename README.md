@@ -69,6 +69,6 @@ RadpretationTools/
 *   **Progress Overlays**: Native Slicer UI overlays for download/upload progress bars.
 
 ## 10. License
-RadpretationExtension is licensed under the Apache License 2.0.
+Radpretation is licensed under the Apache License 2.0.
 
 You are free to use, modify, and distribute this project in accordance with the license terms. See the [LICENSE](LICENSE) file for full details.
