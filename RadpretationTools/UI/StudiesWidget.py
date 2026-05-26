@@ -296,13 +296,21 @@ class StudiesWidget(qt.QWidget):
         )
         
     def on_load_progress(self, percent, msg):
-        self.show_status(f"[{percent}%] {msg}", error=False)
+        from Utils.helpers import MainThreadDispatcher
+        MainThreadDispatcher.get_instance().dispatch(
+            self.show_status, f"[{percent}%] {msg}", False
+        )
         
     def on_load_complete(self, success):
+        from Utils.helpers import MainThreadDispatcher
         if success:
-            self.show_status("Study loaded successfully.", error=False)
+            MainThreadDispatcher.get_instance().dispatch(
+                self.show_status, "Study loaded successfully.", False
+            )
         else:
-            self.show_status("Failed to load study.", error=True)
+            MainThreadDispatcher.get_instance().dispatch(
+                self.show_status, "Failed to load study.", True
+            )
 
     def show_status(self, msg, error=False):
         self.status_label.setText(msg)
