@@ -16,12 +16,31 @@ class SegmentationService:
         self.active_segmentation_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", "RadpretationSeg")
         self.active_segmentation_node.CreateDefaultDisplayNodes()
         
-        # Link to active volume
-        volume_nodes = slicer.util.getNodesByClass("vtkMRMLScalarVolumeNode")
-        if volume_nodes:
-            # Use the first one
-            vol = list(volume_nodes)[0]
+        # Link to active volume dynamically by checking the currently visible background volume first,
+        # falling back to the first available scalar volume node in the scene.
+        vol = None
+        try:
+            layoutManager = slicer.app.layoutManager()
+            if layoutManager:
+                redWidget = layoutManager.sliceWidget("Red")
+                if redWidget:
+                    sliceLogic = redWidget.sliceLogic()
+                    sliceCompositeNode = sliceLogic.GetSliceCompositeNode()
+                    if sliceCompositeNode:
+                        volumeID = sliceCompositeNode.GetBackgroundVolumeID()
+                        if volumeID:
+                            vol = slicer.mrmlScene.GetNodeByID(volumeID)
+        except Exception as e:
+            logger.debug(f"Could not get Red slice background volume: {e}")
+            
+        if not vol:
+            volume_nodes = slicer.util.getNodesByClass("vtkMRMLScalarVolumeNode")
+            if volume_nodes:
+                vol = list(volume_nodes)[0]
+
+        if vol:
             self.active_segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(vol)
+            self.active_segmentation_node.SetNodeReferenceID("ReferenceVolumeGeometry", vol.GetID())
             
             # Place the segmentation node in the same SubjectHierarchy folder (Study) as the volume
             shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
@@ -41,8 +60,8 @@ class SegmentationService:
         # Set the active nodes in the segment editor widget
         segmentEditorWidget = slicer.modules.segmenteditor.widgetRepresentation().self().editor
         segmentEditorWidget.setSegmentationNode(self.active_segmentation_node)
-        if volume_nodes:
-            segmentEditorWidget.setSourceVolumeNode(list(volume_nodes)[0])
+        if vol:
+            segmentEditorWidget.setSourceVolumeNode(vol)
 
         logger.info("Segmentation created and tracking started.")
 

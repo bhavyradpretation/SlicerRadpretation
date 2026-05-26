@@ -42,6 +42,49 @@ class StudyLoader:
         self.dicom_service = DICOMWebService()
         self.cache_manager = CacheManager()
 
+    def _patch_dicom_file(self, file_path):
+        """Ensures the DICOM file has essential spatial/hierarchical metadata required by dcmqi for DICOM SEG export."""
+        try:
+            import pydicom
+            from pydicom.uid import generate_uid
+            
+            ds = pydicom.dcmread(file_path)
+            modified = False
+            
+            # 1. FrameOfReferenceUID (mandatory for DICOM SEG)
+            if "FrameOfReferenceUID" not in ds or not ds.FrameOfReferenceUID:
+                study_uid = getattr(ds, "StudyInstanceUID", "")
+                if study_uid:
+                    import hashlib
+                    hash_val = hashlib.sha256(study_uid.encode()).hexdigest()
+                    nums = [str(int(hash_val[i:i+7], 16)) for i in range(0, 56, 7)]
+                    uid_str = f"2.25.{'.'.join(nums)}"[:64]
+                    if uid_str.endswith("."):
+                        uid_str = uid_str[:-1]
+                    ds.FrameOfReferenceUID = uid_str
+                else:
+                    ds.FrameOfReferenceUID = generate_uid()
+                modified = True
+                logger.info(f"Patched missing FrameOfReferenceUID to: {ds.FrameOfReferenceUID}")
+                
+            # 2. ImagePositionPatient (mandatory for 3D coordinates in dcmqi)
+            if "ImagePositionPatient" not in ds or not ds.ImagePositionPatient:
+                ds.ImagePositionPatient = [0.0, 0.0, 0.0]
+                modified = True
+                logger.info("Patched missing ImagePositionPatient to [0.0, 0.0, 0.0]")
+                
+            # 3. ImageOrientationPatient (mandatory for 3D coordinates in dcmqi)
+            if "ImageOrientationPatient" not in ds or not ds.ImageOrientationPatient:
+                ds.ImageOrientationPatient = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+                modified = True
+                logger.info("Patched missing ImageOrientationPatient to [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]")
+                
+            if modified:
+                ds.save_as(file_path)
+                logger.info(f"Successfully saved patched DICOM file: {file_path}")
+        except Exception as e:
+            logger.error(f"Failed to patch DICOM file '{file_path}': {e}")
+
     def load_study_remote(self, study_model, auth_header=None, progress_callback=None, completion_callback=None):
         """
         Main entry point to load a study.
@@ -189,6 +232,18 @@ class StudyLoader:
                 
             logger.info("Phase 2 Complete. All files verified successfully.")
 
+            # Phase 3: Compliance Patching (Ensures 2D/CR studies are valid for DICOM SEG export)
+            logger.info("Phase 3: Patching DICOM metadata for Slicer/dcmqi compliance...")
+            if progress_callback:
+                progress_callback(97, "Compliance patching DICOM files...")
+                
+            for root, _, names in os.walk(cache_dir):
+                for name in names:
+                    if name.lower().endswith(".dcm"):
+                        full_path = os.path.join(root, name)
+                        self._patch_dicom_file(full_path)
+            logger.info("Phase 3 Complete. All files patched successfully.")
+
             if progress_callback:
                 progress_callback(100, "Done.")
                 
@@ -207,15 +262,11 @@ class StudyLoader:
 
         logger.info(f"Download complete. Importing cache dir into Slicer: {cache_dir}")
         
-        # Clean all old radpretation segmentation nodes from the MRML scene
+        # Clear the old scene entirely before importing the new study to avoid node mixing and memory leaks
         try:
-            logger.info("Cleaning up old Radpretation segmentation nodes...")
-            seg_nodes = slicer.util.getNodesByClass("vtkMRMLSegmentationNode")
-            for node in list(seg_nodes):
-                if "radpretation" in node.GetName().lower():
-                    logger.info(f"Removing old segmentation node: {node.GetName()}")
-                    slicer.mrmlScene.RemoveNode(node)
-                    
+            logger.info("Clearing MRML scene for new study load...")
+            slicer.mrmlScene.Clear(0)
+            
             # Reset active segmentation state and save button state in the RadpretationTools module
             widget_ref = None
             if hasattr(slicer.modules, 'radpretationtools'):
@@ -229,7 +280,7 @@ class StudyLoader:
                     widget.segmentation_service.active_segmentation_node = None
                     widget.segmentation_service.mark_saved()
         except Exception as e:
-            logger.error(f"Error cleaning up old segmentations: {e}")
+            logger.error(f"Error clearing scene or resetting active segmentation: {e}")
 
         try:
             DICOMUtils.importDicom(cache_dir)
