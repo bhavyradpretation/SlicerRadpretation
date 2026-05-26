@@ -26,12 +26,25 @@ class ExportService:
         try:
             shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
             segItemID = shNode.GetItemByDataNode(seg_node)
+            
+            # Log segmentation and reference volume details for easy troubleshooting of 2D/CR exports
+            logger.info(f"Exporting segmentation node: {seg_node.GetName()}, SH Item ID: {segItemID}")
+            ref_volume_id = seg_node.GetNodeReferenceID("ReferenceVolumeGeometry")
+            if ref_volume_id:
+                ref_volume = slicer.mrmlScene.GetNodeByID(ref_volume_id)
+                if ref_volume:
+                    ref_vol_item = shNode.GetItemByDataNode(ref_volume)
+                    logger.info(f"Reference Volume Node: {ref_volume.GetName()} ({ref_volume.GetClassName()}), SH Item ID: {ref_vol_item}")
+                else:
+                    logger.warning(f"Reference Volume Node with ID '{ref_volume_id}' not found in MRML scene.")
+            else:
+                logger.warning("No ReferenceVolumeGeometry set on the segmentation node.")
 
             dicomPlugin = slicer.modules.dicomPlugins['DICOMSegmentationPlugin']()
             exportables = dicomPlugin.examineForExport(segItemID)
             
             if not exportables:
-                raise Exception("Segmentation cannot be exported. Ensure it has a reference volume.")
+                raise Exception("Segmentation cannot be exported. Ensure the segmentation has a valid reference volume and the reference volume was loaded from a DICOM database.")
             
             exportable = exportables[0]
             exportable.directory = export_dir
