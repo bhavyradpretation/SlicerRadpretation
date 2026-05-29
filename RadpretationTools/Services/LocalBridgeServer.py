@@ -125,6 +125,15 @@ class LocalBridgeServer:
         
         def reset_button_later():
             self.main_widget.export_seg_btn.setText("Save Segmentation")
+            try:
+                for mod_name in ("radpretationtools", "RadpretationTools"):
+                    if hasattr(slicer.modules, mod_name):
+                        widget = getattr(slicer.modules, mod_name).widgetRepresentation().self()
+                        if hasattr(widget, "refreshSaveButtonState"):
+                            widget.refreshSaveButtonState()
+                            return
+            except Exception:
+                pass
             self.main_widget.update_save_button_state()
 
         # We need to find the study model from DICOMweb first

@@ -4,6 +4,7 @@ from Services.APIService import APIService
 from Services.StudyLoader import StudyLoader
 from Utils.logger import logger
 from Utils.config import config
+from Utils.ui_styles import SECONDARY_BUTTON, SUCCESS_BUTTON, DISABLED_BUTTON
 
 class StudiesWidget(qt.QWidget):
     """UI for displaying a list of studies from the Web Application and loading them."""
@@ -55,25 +56,18 @@ class StudiesWidget(qt.QWidget):
         self.refresh_btn = qt.QPushButton("Reload Studies")
         self.refresh_btn.setToolTip("Reload Studies List")
         self.refresh_btn.setFixedHeight(32)
-        self.refresh_btn.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(0, 122, 204, 0.08);
-                border: 1px solid rgba(0, 122, 204, 0.25);
-                color: #007acc;
-                border-radius: 6px;
-                font-size: 11px;
-                font-weight: bold;
-                padding: 0 14px;
-            }
-            QPushButton:hover {
-                background-color: rgba(0, 122, 204, 0.15);
-            }
-            QPushButton:pressed {
-                background-color: rgba(0, 122, 204, 0.25);
-            }
-        """)
+        self.refresh_btn.setStyleSheet(SECONDARY_BUTTON)
         self.refresh_btn.clicked.connect(self.on_refresh_clicked)
         controls_layout.addWidget(self.refresh_btn)
+        
+        self.seg_toggle_btn = qt.QPushButton()
+        self.seg_toggle_btn.setToolTip("Toggle loading segmentation files automatically")
+        self.seg_toggle_btn.setFixedHeight(32)
+        self.seg_toggle_btn.setCheckable(True)
+        self.seg_toggle_btn.setChecked(config.load_with_seg)
+        self.seg_toggle_btn.toggled.connect(self.on_seg_toggle_toggled)
+        self.update_seg_toggle_style()
+        controls_layout.addWidget(self.seg_toggle_btn)
         
         controls_layout.addStretch(1)
         layout.addLayout(controls_layout)
@@ -211,6 +205,19 @@ class StudiesWidget(qt.QWidget):
         self.search_timer.stop()
         self.current_page = 1
         self.fetch_studies()
+
+    def on_seg_toggle_toggled(self, checked):
+        config.load_with_seg = checked
+        self.update_seg_toggle_style()
+        logger.info(f"Load with segmentation toggled to: {checked}")
+
+    def update_seg_toggle_style(self):
+        if self.seg_toggle_btn.isChecked():
+            self.seg_toggle_btn.setText("Load with Seg")
+            self.seg_toggle_btn.setStyleSheet(SUCCESS_BUTTON)
+        else:
+            self.seg_toggle_btn.setText("Load without Seg")
+            self.seg_toggle_btn.setStyleSheet(DISABLED_BUTTON)
 
     def on_prev_clicked(self):
         if self.current_page > 1:

@@ -1,5 +1,6 @@
 import os
 import threading
+import qt
 import slicer
 from DICOMLib import DICOMUtils
 from Services.DICOMWebService import DICOMWebService
@@ -93,6 +94,35 @@ class StudyLoader:
         logger.info(f"Created complete marker file: {marker}")
 
     @staticmethod
+    def _get_local_cached_instances(dicom_dir):
+        """Scans the local cached files and returns a dictionary mapping SOPInstanceUID to absolute file path."""
+        import pydicom
+        local_instances = {}
+        if not os.path.isdir(dicom_dir):
+            return local_instances
+
+        for root, _, files in os.walk(dicom_dir):
+            for name in files:
+                if name.startswith('.'):
+                    continue
+                file_path = os.path.join(root, name)
+                
+                # Fast path: if the filename is f"{uid}.dcm"
+                basename, ext = os.path.splitext(name)
+                if all(c.isdigit() or c == '.' for c in basename) and len(basename) > 10:
+                    local_instances[basename] = file_path
+                    continue
+                
+                try:
+                    ds = pydicom.dcmread(file_path, stop_before_pixels=True)
+                    uid = getattr(ds, "SOPInstanceUID", None)
+                    if uid:
+                        local_instances[str(uid)] = file_path
+                except Exception as e:
+                    logger.debug(f"Skipping non-DICOM or unreadable file: {file_path}")
+        return local_instances
+
+    @staticmethod
     def patch_dicom_for_export(file_path):
         """Patch spatial tags only when exporting SEG (not during study load)."""
         try:
@@ -160,13 +190,94 @@ class StudyLoader:
             cache_root = self.cache_manager.cache_dir
             dicom_dir = self._dicom_dir(cache_root, study_uid)
 
+            # --- CACHE PACS SYNC LOGIC ---
             if self._is_cache_complete(cache_root, study_uid):
-                logger.info(f"Study {study_uid} is already fully cached. Skipping download.")
-                self.cache_manager.touch_cache(study_uid)
+                logger.info(f"Study {study_uid} cache is marked complete. Verifying sync with PACS...")
+                
+                # Fetch instance list from PACS to check if there are any updates/changes
                 if progress_callback:
-                    progress_callback(100, "Loading from cache...")
-                return self._resolve_import_dir(cache_root, study_uid)
+                    progress_callback(5, "Checking PACS for updates...")
+                
+                try:
+                    logger.info(f"Fetching instance list from PACS for {study_uid} to verify cache...")
+                    instance_map = self.dicom_service.fetch_all_study_instances(study_uid, auth_header=auth_header)
+                except Exception as pacs_err:
+                    logger.warning(f"Failed to fetch study instances from PACS for sync check: {pacs_err}. Falling back to cached data.")
+                    instance_map = None
 
+                if not instance_map:
+                    # If PACS fetch fails or returns empty (offline/error), fallback to existing cache to remain functional
+                    logger.warning("PACS fetch returned no instances or was offline. Falling back to cached copy.")
+                    self.cache_manager.touch_cache(study_uid)
+                    if progress_callback:
+                        progress_callback(100, "Loading from cache...")
+                    return self._resolve_import_dir(cache_root, study_uid)
+
+                # PACS fetch succeeded, let's analyze local vs PACS files
+                resolve_dir = self._resolve_import_dir(cache_root, study_uid)
+                local_instances = self._get_local_cached_instances(resolve_dir)
+                pacs_uids = {inst_uid for _, inst_uid in instance_map}
+                
+                missing_uids = pacs_uids - set(local_instances.keys())
+                stale_uids = set(local_instances.keys()) - pacs_uids
+
+                if not missing_uids and not stale_uids:
+                    logger.info(f"Cache for study {study_uid} is perfectly in sync with PACS (total instances: {len(pacs_uids)}). Skipping download.")
+                    self.cache_manager.touch_cache(study_uid)
+                    if progress_callback:
+                        progress_callback(100, "Cache is up-to-date. Loading...")
+                    return resolve_dir
+
+                logger.info(f"Cache out of sync for study {study_uid}. Missing: {len(missing_uids)}, Stale: {len(stale_uids)}")
+                
+                # Since we are modifying the cache, remove the complete marker file first to prevent partial/broken reads
+                marker_file = self._marker_path(cache_root, study_uid)
+                legacy_marker = os.path.join(cache_root, study_uid, ".complete")
+                for marker in (marker_file, legacy_marker):
+                    if os.path.exists(marker):
+                        try:
+                            os.remove(marker)
+                        except Exception as e:
+                            logger.warning(f"Could not remove complete marker {marker}: {e}")
+
+                # Delete stale cached instances (e.g., deleted series/instances on PACS)
+                if stale_uids:
+                    logger.info(f"Deleting {len(stale_uids)} stale cached file(s) that are no longer on PACS...")
+                    for uid in stale_uids:
+                        path = local_instances[uid]
+                        try:
+                            os.remove(path)
+                            logger.debug(f"Deleted stale cached file: {path}")
+                        except Exception as e:
+                            logger.warning(f"Failed to delete stale file {path}: {e}")
+
+                # Download missing instances
+                if missing_uids:
+                    logger.info(f"Downloading {len(missing_uids)} missing instance(s) from PACS...")
+                    if progress_callback:
+                        progress_callback(10, f"Syncing {len(missing_uids)} new instances from PACS...")
+                    
+                    missing_instance_map = [(series_uid, inst_uid) for series_uid, inst_uid in instance_map if inst_uid in missing_uids]
+                    
+                    # Ensure dicom_dir exists
+                    os.makedirs(dicom_dir, exist_ok=True)
+                    
+                    if self._download_instances_parallel(
+                        study_uid, dicom_dir, auth_header, progress_callback, instance_map=missing_instance_map
+                    ):
+                        logger.info("Successfully synchronized cache by downloading missing instances.")
+                    else:
+                        logger.error("Failed to download missing instances to synchronize cache.")
+                        raise RuntimeError("Failed to download missing instances for cache synchronization.")
+
+                # Sync completed successfully, write the marker
+                self._write_complete_marker(cache_root, study_uid)
+                if progress_callback:
+                    progress_callback(100, "Synchronization complete.")
+                return dicom_dir
+            # -------------------------------------
+
+            # If cache is not complete at all, proceed with a full study download
             os.makedirs(dicom_dir, exist_ok=True)
 
             if progress_callback:
@@ -211,18 +322,21 @@ class StudyLoader:
             logger.warning(f"Orthanc bulk download failed, will use WADO-RS: {e}")
             return False
 
-    def _download_instances_parallel(self, study_uid, dicom_dir, auth_header, progress_callback):
+    def _download_instances_parallel(self, study_uid, dicom_dir, auth_header, progress_callback, instance_map=None):
         from Utils.config import config
         import concurrent.futures
 
-        logger.info(f"Looking up instances for {study_uid} via QIDO-RS...")
-        instance_map = self.dicom_service.fetch_all_study_instances(study_uid, auth_header=auth_header)
-        if not instance_map:
-            logger.error("Could not find instances in DICOMweb.")
-            return False
+        if instance_map is None:
+            logger.info(f"Looking up instances for {study_uid} via QIDO-RS...")
+            instance_map = self.dicom_service.fetch_all_study_instances(study_uid, auth_header=auth_header)
+            if not instance_map:
+                logger.error("Could not find instances in DICOMweb.")
+                return False
 
         total_instances = len(instance_map)
         logger.info(f"Total instances to stream: {total_instances}")
+        if total_instances == 0:
+            return True
         if progress_callback:
             progress_callback(10, f"Streaming {total_instances} instances from PACS...")
 
@@ -378,6 +492,9 @@ class StudyLoader:
             DICOMUtils.importDicom(cache_dir)
             logger.info("DICOM data imported to local Slicer database successfully.")
 
+            from Utils.config import config
+            load_with_seg = config.load_with_seg
+
             db = slicer.dicomDatabase
             if db.isOpen:
                 target_study_uid = study_model.study_instance_uid
@@ -389,25 +506,36 @@ class StudyLoader:
                 else:
                     logger.warning("Could not find imported series in Slicer DB to auto-load.")
 
-            seg_nodes = slicer.util.getNodesByClass("vtkMRMLSegmentationNode")
-            if seg_nodes:
-                loaded_seg = list(seg_nodes)[0]
-                logger.info(f"Detected loaded segmentation node: {loaded_seg.GetName()}")
-                if widget_ref:
-                    widget = widget_ref.widgetRepresentation().self()
-                    if hasattr(widget, "segmentation_service") and widget.segmentation_service:
-                        widget.segmentation_service.set_active_segmentation(loaded_seg)
-            else:
-                logger.info("No loaded segmentation nodes detected. Auto-creating segmentation...")
-                if widget_ref:
-                    try:
-                        widget = widget_ref.widgetRepresentation().self()
-                        if hasattr(widget, "onCreateSegmentationClicked"):
-                            widget.onCreateSegmentationClicked()
-                        elif hasattr(widget, "segmentation_service") and widget.segmentation_service:
-                            widget.segmentation_service.create_segmentation()
-                    except Exception as e:
-                        logger.error(f"Failed to automatically create segmentation: {e}")
+                if load_with_seg:
+                    seg_series = []
+                    for patient in db.patients():
+                        for study in db.studiesForPatient(patient):
+                            if study != target_study_uid:
+                                continue
+                            for series in db.seriesForStudy(study):
+                                modality = self._series_modality(db, series)
+                                if modality == "SEG":
+                                    seg_series.append(series)
+                    
+                    if seg_series:
+                        logger.info(f"Auto-loading {len(seg_series)} segmentation series...")
+                        try:
+                            DICOMUtils.loadSeriesByUID(seg_series)
+                        except Exception as e:
+                            logger.error(f"Failed to load segmentation series: {e}")
+
+            if widget_ref:
+                widget = widget_ref.widgetRepresentation().self()
+                if hasattr(widget, "finalizeStudyLoad"):
+                    logger.info("Scheduling post-load Segment Editor activation...")
+                    qt.QTimer.singleShot(500, lambda: widget.finalizeStudyLoad(load_with_seg))
+                elif hasattr(widget, "segmentation_service") and widget.segmentation_service:
+                    qt.QTimer.singleShot(
+                        500,
+                        lambda: widget.segmentation_service.create_segmentation(),
+                    )
+            elif not load_with_seg:
+                logger.info("Load with segmentation DICOM disabled; volumes only from PACS.")
 
             if completion_callback:
                 completion_callback(True)

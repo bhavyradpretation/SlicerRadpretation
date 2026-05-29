@@ -9,6 +9,11 @@ from UI.LoginWidget import LoginWidget
 from UI.StudiesWidget import StudiesWidget
 from Utils.logger import logger
 from Utils.config import config
+from Utils.ui_styles import (
+    ICON_TOOL_BUTTON,
+    SAVE_BUTTON_DISABLED,
+    SAVE_BUTTON_ENABLED,
+)
 
 class MainWidget:
     """The main entry point for the Radpretation Slicer UI."""
@@ -37,20 +42,7 @@ class MainWidget:
         self.restart_btn.setToolTip("Restart Slicer")
         self.restart_btn.setFixedSize(30, 30)
         self.restart_btn.setFont(qt.QFont("Arial", 11, qt.QFont.Bold))
-        self.restart_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #333333;
-                color: #ffffff;
-                border: 1px solid #555555;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #444444;
-            }
-            QPushButton:pressed {
-                background-color: #222222;
-            }
-        """)
+        self.restart_btn.setStyleSheet(ICON_TOOL_BUTTON)
         self.restart_btn.clicked.connect(self.on_restart_clicked)
         self.header_layout.addWidget(self.restart_btn)
         
@@ -59,20 +51,7 @@ class MainWidget:
         self.settings_btn.setToolTip("PACS Settings")
         self.settings_btn.setFixedSize(30, 30)
         self.settings_btn.setFont(qt.QFont("Arial", 11, qt.QFont.Bold))
-        self.settings_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #333333;
-                color: #ffffff;
-                border: 1px solid #555555;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #444444;
-            }
-            QPushButton:pressed {
-                background-color: #222222;
-            }
-        """)
+        self.settings_btn.setStyleSheet(ICON_TOOL_BUTTON)
         self.settings_btn.clicked.connect(self.open_settings_dialog)
         self.header_layout.addWidget(self.settings_btn)
         
@@ -96,7 +75,8 @@ class MainWidget:
         self.export_seg_btn = qt.QPushButton("Save Segmentation")
 
         self.has_unsaved_changes = False
-        
+        self.save_available = False
+
         self.update_save_button_state()
 
         self.layout.addStretch(1)
@@ -221,33 +201,10 @@ class MainWidget:
         slicer.app.restart()
 
     def update_save_button_state(self):
-        if self.has_unsaved_changes:
+        can_save = self.has_unsaved_changes or getattr(self, "save_available", False)
+        if can_save:
             self.export_seg_btn.enabled = True
-            self.export_seg_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #ffb74d;
-                    color: white;
-                    padding: 8px;
-                    border: none;
-                    border-radius: 6px;
-                    font-weight: bold;
-                    font-size: 11px;
-                }
-                QPushButton:hover {
-                    background-color: #ffa726;
-                }
-                QPushButton:pressed {
-                    background-color: #e65100;
-                }
-            """)
+            self.export_seg_btn.setStyleSheet(SAVE_BUTTON_ENABLED)
         else:
             self.export_seg_btn.enabled = False
-            self.export_seg_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #999999;
-                    color: white;
-                    padding: 8px;
-                    border-radius: 6px;
-                    font-size: 11px;
-                }
-            """)
+            self.export_seg_btn.setStyleSheet(SAVE_BUTTON_DISABLED)

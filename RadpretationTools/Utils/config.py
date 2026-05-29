@@ -132,6 +132,16 @@ class ConfigManager:
     def cache_retention_days(self, value):
         self.settings.setValue("Radpretation/CacheRetentionDays", str(value))
 
+    @property
+    def load_with_seg(self):
+        """Returns True if Slicer should automatically search for and load/create segmentations."""
+        val = self.settings.value("Radpretation/LoadWithSeg", "true")
+        return val == "true" or val is True
+
+    @load_with_seg.setter
+    def load_with_seg(self, value):
+        self.settings.setValue("Radpretation/LoadWithSeg", "true" if value else "false")
+
 LOCAL_BRIDGE_PORT = 5000
 
 config = ConfigManager.get_instance()

@@ -13,10 +13,19 @@ class ExportService:
         self.seg_service = segmentation_service
 
     def export_and_upload(self, callback=None):
+        if hasattr(self.seg_service, "prepare_for_export"):
+            ready, message = self.seg_service.prepare_for_export()
+            if not ready:
+                logger.error(f"Export preflight failed: {message}")
+                if callback:
+                    callback(False, message)
+                return
+
         seg_node = self.seg_service.get_active_segmentation()
         if not seg_node:
             logger.error("No active segmentation to export.")
-            if callback: callback(False, "No active segmentation")
+            if callback:
+                callback(False, "No active segmentation found.")
             return
 
         # Slicer DICOM export must run on the main thread because it interacts with the MRML scene and Subject Hierarchy
@@ -75,7 +84,10 @@ class ExportService:
                 )
 
             export_path = exported_files[0]
-            
+
+            from Services.StudyLoader import StudyLoader
+            StudyLoader.patch_dicom_for_export(export_path)
+
             logger.info(f"Export completed to {export_path}. Starting background upload...")
             
             # Extract StudyInstanceUID to associate the upload properly
