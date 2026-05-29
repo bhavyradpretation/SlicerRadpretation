@@ -119,6 +119,19 @@ class ConfigManager:
     def web_token(self, value):
         self._web_token = value
 
+    @property
+    def cache_retention_days(self):
+        """Returns the cache retention duration in days (default: 3)."""
+        val = self.settings.value("Radpretation/CacheRetentionDays", "3")
+        try:
+            return int(val)
+        except ValueError:
+            return 3
+
+    @cache_retention_days.setter
+    def cache_retention_days(self, value):
+        self.settings.setValue("Radpretation/CacheRetentionDays", str(value))
+
 LOCAL_BRIDGE_PORT = 5000
 
 config = ConfigManager.get_instance()

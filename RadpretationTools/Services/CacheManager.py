@@ -25,15 +25,65 @@ class CacheManager:
         if not os.path.exists(self.cache_dir):
             os.makedirs(self.cache_dir)
 
+    def touch_cache(self, study_uid):
+        """Touches the complete marker of a study cache folder to refresh its modification time."""
+        try:
+            study_dir = os.path.join(self.cache_dir, study_uid)
+            marker_file = os.path.join(study_dir, ".complete")
+            if os.path.exists(marker_file):
+                import time
+                os.utime(marker_file, None)
+                os.utime(study_dir, None)
+                logger.info(f"Touched cache for study: {study_uid}")
+        except Exception as e:
+            logger.warning(f"Failed to touch cache for study {study_uid}: {e}")
+
     def clear_cache(self):
-        """Completely wipes the temporary DICOM cache to free space."""
+        """Cleans up old cached studies that exceed the retention threshold."""
+        try:
+            from Utils.config import config
+            retention_days = config.cache_retention_days
+            
+            # If set to Never Clear (e.g. 9999), we skip automatic cleanup
+            if retention_days >= 9999:
+                logger.info("Cache retention set to 'Never Clear'. Skipping automatic cleanup.")
+                return
+
+            if not os.path.exists(self.cache_dir):
+                return
+
+            import time
+            now = time.time()
+            threshold_seconds = retention_days * 24 * 3600
+
+            cleaned_count = 0
+            for name in os.listdir(self.cache_dir):
+                item_path = os.path.join(self.cache_dir, name)
+                if os.path.isdir(item_path):
+                    # Check mtime of the .complete marker, fallback to directory itself
+                    marker_file = os.path.join(item_path, ".complete")
+                    check_path = marker_file if os.path.exists(marker_file) else item_path
+                    
+                    mtime = os.path.getmtime(check_path)
+                    age_seconds = now - mtime
+                    if age_seconds > threshold_seconds:
+                        logger.info(f"Cleaning up old cache folder: {item_path} (age: {age_seconds / 3600:.1f} hours)")
+                        shutil.rmtree(item_path)
+                        cleaned_count += 1
+            if cleaned_count > 0:
+                logger.info(f"Cleaned up {cleaned_count} old cache folder(s).")
+        except Exception as e:
+            logger.error(f"Failed to clear cache: {e}")
+
+    def clear_all_cache(self):
+        """Completely wipes the entire temporary DICOM cache to free space immediately."""
         try:
             if os.path.exists(self.cache_dir):
                 shutil.rmtree(self.cache_dir)
             self._ensure_cache_dir()
-            logger.info("Temporary DICOM cache cleared.")
+            logger.info("All temporary DICOM cache cleared.")
         except Exception as e:
-            logger.error(f"Failed to clear cache: {e}")
+            logger.error(f"Failed to clear all cache: {e}")
 
     def get_study_cache_dir(self, study_uid):
         """Gets a dedicated directory for a specific study."""

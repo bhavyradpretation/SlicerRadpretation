@@ -107,16 +107,23 @@ class StudyLoader:
     def _download_study_worker(self, study_model, auth_header, progress_callback):
         """Background worker that streams DICOM files natively and verifies them."""
         try:
-            logger.info("Worker started. Phase 1: Download using DICOMweb QIDO-RS and WADO-URI")
             study_uid = study_model.study_instance_uid
+            cache_dir = os.path.join(self.cache_manager.cache_dir, study_uid)
+            marker_file = os.path.join(cache_dir, ".complete")
             
-            import uuid
-            # Use a completely unique UUID for the download directory to prevent any 
-            # file locks or ghost files from previous Slicer imports.
-            batch_id = uuid.uuid4().hex
-            cache_dir = os.path.join(self.cache_manager.cache_dir, f"{study_uid}_{batch_id}")
+            # Fast-path: check if study is already completely cached
+            if os.path.exists(marker_file):
+                logger.info(f"Study {study_uid} is already fully cached. Skipping download.")
+                self.cache_manager.touch_cache(study_uid)
+                if progress_callback:
+                    progress_callback(95, "Verifying cached files...")
+                    progress_callback(97, "Checking cached compliance...")
+                    progress_callback(100, "Done.")
+                return cache_dir
+
+            logger.info("Worker started. Phase 1: Download using DICOMweb QIDO-RS and WADO-URI")
             os.makedirs(cache_dir, exist_ok=True)
-            logger.info(f"Unique cache dir created: {cache_dir}")
+            logger.info(f"Cache dir created: {cache_dir}")
             
             from Utils.config import config
             
@@ -243,6 +250,15 @@ class StudyLoader:
                         full_path = os.path.join(root, name)
                         self._patch_dicom_file(full_path)
             logger.info("Phase 3 Complete. All files patched successfully.")
+
+            # Create the complete marker to indicate full download success
+            marker_file = os.path.join(cache_dir, ".complete")
+            try:
+                with open(marker_file, "w") as f:
+                    f.write("complete")
+                logger.info(f"Created complete marker file: {marker_file}")
+            except Exception as e:
+                logger.warning(f"Failed to create complete marker file: {e}")
 
             if progress_callback:
                 progress_callback(100, "Done.")

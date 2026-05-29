@@ -40,6 +40,39 @@ class SettingsWidget(qt.QWidget):
         self.password_label = qt.QLabel("Password:")
         layout.addRow(self.password_label, self.password_edit)
         
+        # Cache Settings Section
+        self.cache_header = qt.QLabel("Cache Settings")
+        self.cache_header.setFont(qt.QFont("Arial", 9, qt.QFont.Bold))
+        layout.addRow("", self.cache_header)
+
+        # Cache Retention
+        self.cache_days_combo = qt.QComboBox()
+        self.cache_days_combo.addItem("1 Day", 1)
+        self.cache_days_combo.addItem("3 Days (Recommended)", 3)
+        self.cache_days_combo.addItem("5 Days", 5)
+        self.cache_days_combo.addItem("Never Clear", 9999)
+        layout.addRow("Cache Retention:", self.cache_days_combo)
+        
+        # Clear Cache Button
+        self.clear_cache_btn = qt.QPushButton("Clear Cache Now")
+        self.clear_cache_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #d32f2f;
+                color: white;
+                font-weight: bold;
+                padding: 5px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #f44336;
+            }
+        """)
+        self.clear_cache_btn.clicked.connect(self.on_clear_cache_clicked)
+        layout.addRow("", self.clear_cache_btn)
+
+        # Spacer before Save Button
+        layout.addRow("", qt.QLabel(""))
+
         # Save Button
         self.save_btn = qt.QPushButton("Save Settings")
         self.save_btn.clicked.connect(self.save_settings)
@@ -57,12 +90,32 @@ class SettingsWidget(qt.QWidget):
         self.password_edit.setText(config.password)
         self.on_auth_mode_changed()
 
+        # Load cache retention
+        retention = config.cache_retention_days
+        for idx in range(self.cache_days_combo.count):
+            if self.cache_days_combo.itemData(idx) == retention:
+                self.cache_days_combo.currentIndex = idx
+                break
+
     def on_auth_mode_changed(self):
         is_basic = self.auth_mode_combo.currentText == "Basic Auth"
         self.username_label.setVisible(is_basic)
         self.username_edit.setVisible(is_basic)
         self.password_label.setVisible(is_basic)
         self.password_edit.setVisible(is_basic)
+
+    def on_clear_cache_clicked(self):
+        confirm = qt.QMessageBox.question(
+            self,
+            "Clear DICOM Cache",
+            "Are you sure you want to completely clear the local DICOM cache? This will delete all downloaded studies.",
+            qt.QMessageBox.Yes | qt.QMessageBox.No
+        )
+        if confirm == qt.QMessageBox.Yes:
+            from Services.CacheManager import CacheManager
+            cache_mgr = CacheManager()
+            cache_mgr.clear_all_cache()
+            qt.QMessageBox.information(self, "Cache Cleared", "The DICOM cache has been completely cleared.")
 
     def save_settings(self):
         config.pacs_url = self.pacs_url_edit.text.strip()
@@ -71,12 +124,18 @@ class SettingsWidget(qt.QWidget):
         config.username = self.username_edit.text.strip()
         config.password = self.password_edit.text
         
-        logger.info(f"PACS Settings saved. URL: {config.pacs_url}, Auth: {config.auth_mode}")
+        # Save cache retention days
+        selected_index = self.cache_days_combo.currentIndex
+        retention_days = self.cache_days_combo.itemData(selected_index)
+        if retention_days is not None:
+            config.cache_retention_days = int(retention_days)
+        
+        logger.info(f"PACS Settings saved. URL: {config.pacs_url}, Auth: {config.auth_mode}, Cache Retention: {config.cache_retention_days} days")
         
         self.status_label.setText("Settings saved successfully!")
         self.status_label.setStyleSheet("color: #4CAF50;") # Green color
         
-        # Close parent QDialog after 5 seconds
+        # Close parent QDialog after 1 second
         parent = self.parent()
         while parent:
             if isinstance(parent, qt.QDialog):
