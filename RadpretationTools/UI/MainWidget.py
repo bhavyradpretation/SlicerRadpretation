@@ -79,26 +79,6 @@ class MainWidget:
         self.layout.addLayout(self.header_layout)
         
         
-        self.create_seg_btn = qt.QPushButton("Create Segmentation")
-        self.create_seg_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #007acc;
-                color: white;
-                padding: 8px;
-                border: none;
-                border-radius: 6px;
-                font-weight: bold;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #0098ff;
-            }
-            QPushButton:pressed {
-                background-color: #005999;
-            }
-        """)
-        self.create_seg_btn.setVisible(False) # Hidden by default until study is loaded
-        
         # --- Web Platform Studies ---
         self.studies_box = ctk.ctkCollapsibleButton()
         self.studies_box.text = "Studies"

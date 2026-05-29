@@ -59,7 +59,6 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.local_bridge_server.start()
 
         # Connect UI Buttons
-        self.mainWidget.create_seg_btn.connect("clicked()", self.onCreateSegmentationClicked)
         self.mainWidget.export_seg_btn.connect("clicked()", self.onExportClicked)
 
         # Add custom Save Segmentation button to Slicer's standard Segment Editor
@@ -70,23 +69,6 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             slicer.app.moduleManager().connect("moduleAboutToBeSelected(QString)", self.onModuleAboutToBeSelected)
         except Exception as e:
             logger.warning(f"Failed to connect to moduleManager: {e}")
-
-         # Add scene observers to detect study loading/unloading dynamically
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.NodeAddedEvent, self.onSceneChanged)
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.NodeRemovedEvent, self.onSceneChanged)
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneChanged)
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndImportEvent, self.onSceneChanged)
-
-        # Initial button visibility update based on current scene state
-        self.updateCreateSegmentationButtonVisibility()
-
-    def onSceneChanged(self, caller=None, event=None):
-        self.updateCreateSegmentationButtonVisibility()
-
-    def updateCreateSegmentationButtonVisibility(self):
-        if self.mainWidget and hasattr(self.mainWidget, 'create_seg_btn') and self.mainWidget.create_seg_btn:
-            has_volumes = slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLVolumeNode") > 0
-            self.mainWidget.create_seg_btn.setVisible(has_volumes)
 
     def onSegmentationChanged(self, has_unsaved_changes):
         self.mainWidget.has_unsaved_changes = has_unsaved_changes
@@ -109,7 +91,6 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             if existing_container:
                 self.segmentEditorSaveBtn = existing_container.findChild(qt.QPushButton, "RadpretationSaveSegButton")
                 self.segmentEditorBackBtn = existing_container.findChild(qt.QPushButton, "RadpretationBackToRadButton")
-                self.segmentEditorCreateBtn = existing_container.findChild(qt.QPushButton, "RadpretationCreateSegButton")
                 return
 
             # Create container widget and horizontal layout
@@ -142,29 +123,6 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             self.segmentEditorBackBtn.connect("clicked()", self.onBackToRadpretationClicked)
             buttons_layout.addWidget(self.segmentEditorBackBtn, 2)
 
-            # Create the Create New Segmentation button
-            self.segmentEditorCreateBtn = qt.QPushButton("Create Segmentation")
-            self.segmentEditorCreateBtn.setObjectName("RadpretationCreateSegButton")
-            self.segmentEditorCreateBtn.setStyleSheet("""
-                QPushButton {
-                    background-color: #007acc;
-                    color: white;
-                    padding: 8px;
-                    border: none;
-                    border-radius: 6px;
-                    font-weight: bold;
-                    font-size: 11px;
-                }
-                QPushButton:hover {
-                    background-color: #0098ff;
-                }
-                QPushButton:pressed {
-                    background-color: #005999;
-                }
-            """)
-            self.segmentEditorCreateBtn.connect("clicked()", self.onCreateSegmentationClicked)
-            buttons_layout.addWidget(self.segmentEditorCreateBtn, 3)
-
             # Create the Save button
             self.segmentEditorSaveBtn = qt.QPushButton("Save Segmentation")
             self.segmentEditorSaveBtn.setObjectName("RadpretationSaveSegButton")
@@ -177,11 +135,11 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             layout = segmentEditorWidget.layout()
             if layout:
                 layout.addWidget(container)
-                logger.info("Successfully added Save, Create & Back controls to Segment Editor")
+                logger.info("Successfully added Save & Back controls to Segment Editor")
             else:
                 logger.warning("Segment Editor layout not found")
         except Exception as e:
-            logger.error(f"Failed to add save, create and back controls to Segment Editor: {e}")
+            logger.error(f"Failed to add save and back controls to Segment Editor: {e}")
 
     def onModuleAboutToBeSelected(self, moduleName):
         if moduleName == "SegmentEditor":
