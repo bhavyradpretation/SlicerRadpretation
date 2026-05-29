@@ -7,7 +7,18 @@ class CacheManager:
     """Manages the temporary storage used for streaming DICOMs from DICOMweb."""
     
     def __init__(self):
-        self.cache_dir = os.path.join(tempfile.gettempdir(), "RadpretationDICOMCache")
+        base_temp_dir = tempfile.gettempdir()
+        try:
+            import slicer
+            if hasattr(slicer, 'app') and slicer.app is not None:
+                slicer_temp = slicer.app.temporaryPath
+                if slicer_temp:
+                    base_temp_dir = slicer_temp
+        except Exception as e:
+            logger.debug(f"Could not get Slicer temporary path: {e}")
+
+        cache_path = os.path.join(base_temp_dir, "RadpretationDICOMCache")
+        self.cache_dir = os.path.normpath(cache_path).replace('\\', '/')
         self._ensure_cache_dir()
 
     def _ensure_cache_dir(self):

@@ -262,13 +262,21 @@ class StudyLoader:
 
         logger.info(f"Download complete. Importing cache dir into Slicer: {cache_dir}")
         
+        widget_ref = None
         # Clear the old scene entirely before importing the new study to avoid node mixing and memory leaks
         try:
             logger.info("Clearing MRML scene for new study load...")
             slicer.mrmlScene.Clear(0)
             
+            # Remove the old study from Slicer's local DICOM database if it exists,
+            # so the database doesn't reference old, deleted cache files from previous loads.
+            db = slicer.dicomDatabase
+            if db and db.isOpen:
+                target_study_uid = study_model.study_instance_uid
+                logger.info(f"Removing old study reference {target_study_uid} from Slicer DICOM database...")
+                db.removeStudy(target_study_uid)
+            
             # Reset active segmentation state and save button state in the RadpretationTools module
-            widget_ref = None
             if hasattr(slicer.modules, 'radpretationtools'):
                 widget_ref = slicer.modules.radpretationtools
             elif hasattr(slicer.modules, 'RadpretationTools'):
@@ -277,6 +285,7 @@ class StudyLoader:
             if widget_ref:
                 widget = widget_ref.widgetRepresentation().self()
                 if hasattr(widget, 'segmentation_service') and widget.segmentation_service:
+                    widget.segmentation_service.active_study_uid = study_model.study_instance_uid
                     widget.segmentation_service.active_segmentation_node = None
                     widget.segmentation_service.mark_saved()
         except Exception as e:
@@ -305,14 +314,27 @@ class StudyLoader:
                 else:
                     logger.warning("Could not find imported series in Slicer DB to auto-load.")
             
-            # Ensure our module is active if not already
-            try:
-                current_module = slicer.modules.moduleSelector().selectedModule
-            except Exception:
-                current_module = None
-                
-            if current_module != "RadpretationTools":
-                slicer.util.selectModule("RadpretationTools")
+            # Auto-detect and register any loaded segmentation node
+            seg_nodes = slicer.util.getNodesByClass("vtkMRMLSegmentationNode")
+            if seg_nodes:
+                loaded_seg = list(seg_nodes)[0]
+                logger.info(f"Detected loaded segmentation node: {loaded_seg.GetName()}")
+                if widget_ref:
+                    widget = widget_ref.widgetRepresentation().self()
+                    if hasattr(widget, 'segmentation_service') and widget.segmentation_service:
+                        widget.segmentation_service.set_active_segmentation(loaded_seg)
+            else:
+                logger.info("No loaded segmentation nodes detected in the scene.")
+
+            # Ensure our module is active if not already (only if no segmentation was loaded)
+            if not seg_nodes:
+                try:
+                    current_module = slicer.modules.moduleSelector().selectedModule
+                except Exception:
+                    current_module = None
+                    
+                if current_module != "RadpretationTools":
+                    slicer.util.selectModule("RadpretationTools")
             
             if completion_callback:
                 completion_callback(True)
