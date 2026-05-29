@@ -324,17 +324,21 @@ class StudyLoader:
                     if hasattr(widget, 'segmentation_service') and widget.segmentation_service:
                         widget.segmentation_service.set_active_segmentation(loaded_seg)
             else:
-                logger.info("No loaded segmentation nodes detected in the scene.")
-
-            # Ensure our module is active if not already (only if no segmentation was loaded)
-            if not seg_nodes:
-                try:
-                    current_module = slicer.modules.moduleSelector().selectedModule
-                except Exception:
-                    current_module = None
-                    
-                if current_module != "RadpretationTools":
-                    slicer.util.selectModule("RadpretationTools")
+                logger.info("No loaded segmentation nodes detected in the scene. Auto-creating a segmentation and opening Segment Editor...")
+                if widget_ref:
+                    try:
+                        widget = widget_ref.widgetRepresentation().self()
+                        if hasattr(widget, 'onCreateSegmentationClicked'):
+                            widget.onCreateSegmentationClicked()
+                        elif hasattr(widget, 'segmentation_service') and widget.segmentation_service:
+                            widget.segmentation_service.create_segmentation()
+                    except Exception as e:
+                        logger.error(f"Failed to automatically create segmentation: {e}")
+                else:
+                    try:
+                        slicer.util.selectModule("SegmentEditor")
+                    except Exception as e:
+                        logger.error(f"Failed to switch to SegmentEditor module: {e}")
             
             if completion_callback:
                 completion_callback(True)
