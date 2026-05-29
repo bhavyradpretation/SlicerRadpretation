@@ -103,6 +103,7 @@ class DICOMWebService:
             return True
         except Exception as e:
             logger.error(f"Failed to download instance {instance_uid}: {e}")
+            return False
     @staticmethod
     def upload_instance_stow_rs(study_uid, file_path, auth_header=None):
         """Upload a DICOM file using STOW-RS to DICOMweb endpoint."""

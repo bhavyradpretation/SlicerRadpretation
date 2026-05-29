@@ -31,7 +31,9 @@ class MainThreadDispatcher:
 
     def dispatch(self, func, *args, **kwargs):
         """Queue a function to be executed on the main thread."""
-        logger.info(f"Dispatching function to main thread: {func.__name__}")
+        func_name = getattr(func, "__name__", type(func).__name__)
+        if func_name not in ("show_status", "<lambda>"):
+            logger.info(f"Dispatching function to main thread: {func_name}")
         self.queue.put((func, args, kwargs))
 
 class AsyncTaskRunner:

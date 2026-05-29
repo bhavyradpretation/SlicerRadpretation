@@ -38,23 +38,51 @@ class OrthancClient:
             logger.error(f"Failed to lookup study ID for {study_instance_uid}: {e}")
             return None
 
-    def download_study_archive(self, study_id, target_dir):
-        """Download a study archive (ZIP) and extract it to the target directory."""
-        url = f"{self.base_url}/studies/{study_id}/archive"
+    def download_study_archive(self, study_id, target_dir, progress_callback=None):
+        """Download a study archive (ZIP) and extract DICOM files into target_dir."""
         import uuid
+        import zipfile
+
+        url = f"{self.base_url}/studies/{study_id}/archive"
         zip_path = os.path.join(target_dir, f"{study_id}_{uuid.uuid4().hex}.zip")
         try:
-            logger.info(f"Downloading study {study_id} from Orthanc...")
+            logger.info(f"Downloading study archive {study_id} from Orthanc (bulk ZIP)...")
+            os.makedirs(target_dir, exist_ok=True)
             with requests.get(url, stream=True, timeout=600, **self.req_kwargs) as r:
                 r.raise_for_status()
-                with open(zip_path, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=8192):
+                total = int(r.headers.get("Content-Length") or 0)
+                downloaded = 0
+                with open(zip_path, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=1024 * 1024):
+                        if not chunk:
+                            continue
                         f.write(chunk)
-            logger.info(f"Successfully downloaded study to {zip_path}")
-            return zip_path
+                        downloaded += len(chunk)
+                        if progress_callback and total > 0:
+                            pct = 10 + int((downloaded / total) * 75)
+                            progress_callback(pct, "Downloading study archive...")
+
+            if progress_callback:
+                progress_callback(88, "Extracting study archive...")
+
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(target_dir)
+
+            try:
+                os.remove(zip_path)
+            except OSError:
+                pass
+
+            logger.info(f"Study archive extracted to {target_dir}")
+            return True
         except Exception as e:
             logger.error(f"Failed to download study archive: {e}")
-            return None
+            try:
+                if os.path.exists(zip_path):
+                    os.remove(zip_path)
+            except OSError:
+                pass
+            return False
 
     def upload_dicom(self, file_path):
         """Upload a single DICOM file (e.g., DICOM SEG or RTStruct) to Orthanc."""

@@ -270,12 +270,19 @@ class StudiesWidget(qt.QWidget):
     def load_study_at_row(self, row):
         if row < 0 or row >= len(self.studies):
             return
-            
+        if getattr(self, "_study_loading", False):
+            self.show_status("A study is already loading. Please wait...", error=False)
+            return
+
         study = self.studies[row]
-        
+        self._study_loading = True
+        self.table.setEnabled(False)
+
         self.show_status(f"Loading {study.patient_name}...", error=False)
-        
-        loader = StudyLoader()
+
+        if not hasattr(self, "_study_loader"):
+            self._study_loader = StudyLoader()
+        loader = self._study_loader
         # Ensure we pass the appropriate auth header, config.web_token or None?
         # Note: DICOM Web might need Basic Auth or its own JWT, not the Web App JWT.
         # But wait, does LocalBridgeServer.py use `config.web_token`?
@@ -297,20 +304,26 @@ class StudiesWidget(qt.QWidget):
         
     def on_load_progress(self, percent, msg):
         from Utils.helpers import MainThreadDispatcher
+        if getattr(self, "_last_progress_percent", -1) == percent:
+            return
+        self._last_progress_percent = percent
         MainThreadDispatcher.get_instance().dispatch(
             self.show_status, f"[{percent}%] {msg}", False
         )
-        
+
     def on_load_complete(self, success):
         from Utils.helpers import MainThreadDispatcher
-        if success:
-            MainThreadDispatcher.get_instance().dispatch(
-                self.show_status, "Study loaded successfully.", False
-            )
-        else:
-            MainThreadDispatcher.get_instance().dispatch(
-                self.show_status, "Failed to load study.", True
-            )
+
+        def _finish():
+            self._study_loading = False
+            self._last_progress_percent = -1
+            self.table.setEnabled(True)
+            if success:
+                self.show_status("Study loaded successfully.", False)
+            else:
+                self.show_status("Failed to load study.", True)
+
+        MainThreadDispatcher.get_instance().dispatch(_finish)
 
     def show_status(self, msg, error=False):
         self.status_label.setText(msg)
