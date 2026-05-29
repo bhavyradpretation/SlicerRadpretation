@@ -98,7 +98,6 @@ class MainWidget:
             }
         """)
         self.create_seg_btn.setVisible(False) # Hidden by default until study is loaded
-        self.layout.addWidget(self.create_seg_btn)
         
         # --- Web Platform Studies ---
         self.studies_box = ctk.ctkCollapsibleButton()
