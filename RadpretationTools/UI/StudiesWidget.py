@@ -117,9 +117,9 @@ class StudiesWidget(qt.QWidget):
         self.table.setHorizontalScrollBarPolicy(qt.Qt.ScrollBarAlwaysOff)
         
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, qt.QHeaderView.Stretch)
-        header.setSectionResizeMode(1, qt.QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, qt.QHeaderView.Stretch)
+        header.setSectionResizeMode(0, qt.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, qt.QHeaderView.Stretch)
+        header.setSectionResizeMode(2, qt.QHeaderView.ResizeToContents)
         
         # Connect row double click or single click to load study
         self.table.cellDoubleClicked.connect(self.on_study_double_clicked)
