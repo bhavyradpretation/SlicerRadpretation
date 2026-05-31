@@ -12,6 +12,8 @@ class StudiesWidget(qt.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.studies = []
+        self.all_studies = []
+        self.filtered_studies = []
         self.current_page = 1
         self.total_pages = 1
         self.limit = 8
@@ -34,7 +36,7 @@ class StudiesWidget(qt.QWidget):
         controls_layout.setSpacing(8)
         
         self.search_input = qt.QLineEdit()
-        self.search_input.setPlaceholderText(" 🔍   Search patient name...")
+        self.search_input.setPlaceholderText(" 🔍   Search name, ID or modality...")
         self.search_input.setMinimumWidth(120)
         self.search_input.setStyleSheet("""
             QLineEdit {
@@ -199,7 +201,7 @@ class StudiesWidget(qt.QWidget):
 
     def on_search_debounced(self):
         self.current_page = 1
-        self.fetch_studies()
+        self.apply_filter()
 
     def on_refresh_clicked(self):
         self.search_timer.stop()
@@ -222,12 +224,14 @@ class StudiesWidget(qt.QWidget):
     def on_prev_clicked(self):
         if self.current_page > 1:
             self.current_page -= 1
-            self.fetch_studies()
+            self.populate_table()
+            self.update_pagination_ui()
 
     def on_next_clicked(self):
         if self.current_page < self.total_pages:
             self.current_page += 1
-            self.fetch_studies()
+            self.populate_table()
+            self.update_pagination_ui()
 
     def fetch_studies(self):
         self.show_status("Fetching studies...")
@@ -235,25 +239,45 @@ class StudiesWidget(qt.QWidget):
         qt.QTimer.singleShot(100, self._do_fetch)
 
     def _do_fetch(self):
-        patient_name = self.search_input.text.strip().replace("🔍", "").strip()
         success, result = APIService.fetch_reports(
-            page=self.current_page,
-            limit=self.limit,
-            patient_name=patient_name
+            page=1,
+            limit=1000,
+            patient_name=""
         )
         self.refresh_btn.setEnabled(True)
         
         if success:
-            studies, total_pages, current_page = result
-            self.studies = studies
-            self.total_pages = total_pages
-            self.current_page = current_page
-            
-            self.populate_table()
-            self.update_pagination_ui()
+            studies, _, _ = result
+            self.all_studies = studies
+            self.apply_filter()
             self.show_status("", error=False)
         else:
             self.show_status(f"Failed: {result}", error=True)
+
+    def apply_filter(self):
+        query = self.search_input.text.strip().replace("🔍", "").strip().lower()
+        if not query:
+            self.filtered_studies = list(self.all_studies)
+        else:
+            self.filtered_studies = []
+            for study in self.all_studies:
+                # Search patient name
+                p_name = study.patient_name.lower()
+                # Search patient ID (which is refNumber)
+                p_id = study.patient_id.lower()
+                # Search modality
+                mod = study.modalities.lower()
+                
+                if query in p_name or query in p_id or query in mod:
+                    self.filtered_studies.append(study)
+                    
+        # Update pagination based on filtered studies
+        self.total_pages = max(1, (len(self.filtered_studies) + self.limit - 1) // self.limit)
+        if self.current_page > self.total_pages:
+            self.current_page = self.total_pages
+            
+        self.populate_table()
+        self.update_pagination_ui()
 
     def update_pagination_ui(self):
         self.page_label.setText(f"Page {self.current_page} of {self.total_pages}")
@@ -262,7 +286,14 @@ class StudiesWidget(qt.QWidget):
 
     def populate_table(self):
         self.table.setRowCount(0)
-        for i, study in enumerate(self.studies):
+        start_idx = (self.current_page - 1) * self.limit
+        end_idx = start_idx + self.limit
+        page_studies = self.filtered_studies[start_idx:end_idx]
+        
+        # self.studies stores the currently displayed studies so load_study_at_row works properly
+        self.studies = page_studies
+        
+        for i, study in enumerate(page_studies):
             self.table.insertRow(i)
             self.table.setRowHeight(i, 30)
             self.table.setItem(i, 0, qt.QTableWidgetItem(study.patient_id))
