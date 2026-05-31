@@ -48,7 +48,7 @@ class MainWidget:
         
         # PACS Settings Icon Button
         self.settings_btn = qt.QPushButton("⚙")
-        self.settings_btn.setToolTip("PACS Settings")
+        self.settings_btn.setToolTip("PACS and Cache Settings")
         self.settings_btn.setFixedSize(30, 30)
         self.settings_btn.setFont(qt.QFont("Arial", 11, qt.QFont.Bold))
         self.settings_btn.setStyleSheet(ICON_TOOL_BUTTON)
@@ -187,7 +187,7 @@ class MainWidget:
 
     def open_settings_dialog(self):
         settings_dialog = qt.QDialog(slicer.util.mainWindow())
-        settings_dialog.setWindowTitle("PACS Settings")
+        settings_dialog.setWindowTitle("PACS and Cache Settings")
         settings_dialog.setMinimumWidth(350)
         dialog_layout = qt.QVBoxLayout(settings_dialog)
         
