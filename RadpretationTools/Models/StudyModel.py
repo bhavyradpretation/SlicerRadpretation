@@ -7,7 +7,6 @@ class StudyModel:
     patient_id: str
     study_instance_uid: str
     study_date: str
-    currentReviewer: str
     accession_number: str
     modalities: str
     status: str = ""

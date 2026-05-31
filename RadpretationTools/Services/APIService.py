@@ -72,13 +72,7 @@ class APIService:
                     patient_info = item.get("patient", {})
                     report_info = item.get("report", {})
 
-                    current_reviewer_list = report_info.get("currentReviewer", [])
-                    current_reviewer = ""
-                    if current_reviewer_list and isinstance(current_reviewer_list, list):
-                        reviewer = current_reviewer_list[0]
-                        first_name = reviewer.get("firstName", "")
-                        last_name = reviewer.get("lastName", "")
-                        current_reviewer = f"{first_name} {last_name}".strip()
+                    ref_number = item.get("refNumber", "")
                     
                     patient_name_val = f"{patient_info.get('firstName', '')} {patient_info.get('lastName', '')}".strip()
                     if not patient_name_val:
@@ -89,10 +83,9 @@ class APIService:
                     # StudyModel fields
                     study = StudyModel(
                         patient_name=patient_name_val,
-                        patient_id=patient_info.get("patientId", "Unknown"),
                         study_instance_uid=report_info.get("studyInstanceUID", ""),
                         study_date=item.get("createdAt", ""),
-                        currentReviewer=current_reviewer,
+                        patient_id=ref_number,
                         accession_number=item.get("refNumber", ""),
                         modalities=report_info.get("modality", ""),
                         status=status_val

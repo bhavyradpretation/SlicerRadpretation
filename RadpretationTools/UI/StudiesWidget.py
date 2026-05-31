@@ -75,7 +75,7 @@ class StudiesWidget(qt.QWidget):
         # Studies Table
         self.table = qt.QTableWidget()
         self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["Patient Name", "Modality", "Current Reviewer"])
+        self.table.setHorizontalHeaderLabels(["Patient ID", "Patient Name", "Modality"])
         self.table.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
         self.table.setSelectionMode(qt.QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(qt.QAbstractItemView.NoEditTriggers)
@@ -265,9 +265,9 @@ class StudiesWidget(qt.QWidget):
         for i, study in enumerate(self.studies):
             self.table.insertRow(i)
             self.table.setRowHeight(i, 30)
-            self.table.setItem(i, 0, qt.QTableWidgetItem(study.patient_name))
-            self.table.setItem(i, 1, qt.QTableWidgetItem(study.modalities))
-            self.table.setItem(i, 2, qt.QTableWidgetItem(study.currentReviewer))
+            self.table.setItem(i, 0, qt.QTableWidgetItem(study.patient_id))
+            self.table.setItem(i, 1, qt.QTableWidgetItem(study.patient_name))
+            self.table.setItem(i, 2, qt.QTableWidgetItem(study.modalities))
 
     def on_study_double_clicked(self, row, col):
         self.load_study_at_row(row)
