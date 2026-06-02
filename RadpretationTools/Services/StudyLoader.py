@@ -22,7 +22,7 @@ def _orthanc_http_session(auth_header=None):
     if not getattr(_thread_local, "session", None):
         session = requests.Session()
         retries = Retry(total=2, backoff_factor=0.2, status_forcelist=(502, 503, 504))
-        adapter = HTTPAdapter(pool_connections=48, pool_maxsize=48, max_retries=retries)
+        adapter = HTTPAdapter(pool_connections=128, pool_maxsize=128, max_retries=retries)
         session.mount("http://", adapter)
         session.mount("https://", adapter)
 
@@ -198,6 +198,65 @@ class StudyLoader:
         except Exception as e:
             logger.error(f"Failed to patch DICOM file '{file_path}': {e}")
 
+    @staticmethod
+    def _flatten_and_rename_dicom_dir(dicom_dir):
+        """
+        Recursively scans dicom_dir, reads SOPInstanceUID from each DICOM file,
+        moves it directly to dicom_dir named as f"{SOPInstanceUID}.dcm", and
+        cleans up nested empty subdirectories.
+        """
+        import pydicom
+        import shutil
+
+        logger.info(f"Flattening and renaming DICOM files in {dicom_dir}...")
+        
+        # Collect all files first to avoid modifying the directory structure while walking
+        all_files = []
+        for root, dirs, files in os.walk(dicom_dir):
+            for name in files:
+                all_files.append(os.path.join(root, name))
+
+        for file_path in all_files:
+            if not os.path.exists(file_path):
+                continue
+            
+            basename, ext = os.path.splitext(os.path.basename(file_path))
+            # If already a flattened SOPInstanceUID file in the root of dicom_dir, skip
+            parent_dir = os.path.dirname(file_path)
+            is_in_root = (os.path.normpath(parent_dir) == os.path.normpath(dicom_dir))
+            
+            if is_in_root and ext.lower() == ".dcm" and all(c.isdigit() or c == '.' for c in basename) and len(basename) > 10:
+                continue
+
+            try:
+                ds = pydicom.dcmread(file_path, stop_before_pixels=True)
+                uid = getattr(ds, "SOPInstanceUID", None)
+                if uid:
+                    uid_str = str(uid).strip()
+                    target_path = os.path.join(dicom_dir, f"{uid_str}.dcm")
+                    if os.path.normpath(file_path) != os.path.normpath(target_path):
+                        shutil.move(file_path, target_path)
+                else:
+                    if not is_in_root:
+                        os.remove(file_path)
+            except Exception as e:
+                logger.debug(f"Removing unreadable/invalid file during flatten: {file_path} (error: {e})")
+                if not is_in_root:
+                    try:
+                        os.remove(file_path)
+                    except OSError:
+                        pass
+
+        # Now remove any subdirectories under dicom_dir
+        for root, dirs, files in os.walk(dicom_dir, topdown=False):
+            if os.path.normpath(root) == os.path.normpath(dicom_dir):
+                continue
+            try:
+                if not os.listdir(root):
+                    os.rmdir(root)
+            except OSError as e:
+                logger.debug(f"Failed to remove directory {root}: {e}")
+
     def load_study_remote(self, study_model, auth_header=None, progress_callback=None, completion_callback=None):
         """Download (or reuse cache) and import a study. Only the latest request is applied."""
         study_uid = study_model.study_instance_uid
@@ -327,13 +386,13 @@ class StudyLoader:
             if progress_callback:
                 progress_callback(5, "Preparing download...")
 
-            # Parallel WADO is usually faster than Orthanc ZIP (ZIP is built server-side on demand).
-            if self._download_instances_parallel(
+            # Try bulk Orthanc download FIRST as it is orders of magnitude faster than WADO-RS parallel
+            if self._try_orthanc_bulk_download(study_uid, dicom_dir, progress_callback):
+                logger.info("Bulk Orthanc archive download succeeded.")
+            elif self._download_instances_parallel(
                 study_uid, dicom_dir, auth_header, progress_callback
             ):
-                logger.info("Parallel WADO-RS download succeeded.")
-            elif self._try_orthanc_bulk_download(study_uid, dicom_dir, progress_callback):
-                logger.info("Bulk Orthanc archive download succeeded (WADO fallback).")
+                logger.info("Parallel WADO-RS download succeeded (bulk fallback).")
             else:
                 logger.error("All download strategies failed.")
                 return None
@@ -454,7 +513,7 @@ class StudyLoader:
                 return False
 
         logger.info(f"Attempting series-level WADO-RS Retrieve for {len(series_to_download)} series...")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(series_to_download))) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(32, len(series_to_download))) as executor:
             future_to_series = {
                 executor.submit(download_series_task, s_uid): s_uid 
                 for s_uid in series_to_download
@@ -496,12 +555,12 @@ class StudyLoader:
                 'multipart/related; type="application/dicom"',
             ):
                 try:
-                    r = sess.get(wado_rs_url, headers={"Accept": accept_header}, timeout=5)
-                    if r.status_code == 200:
-                        probed_accept_header = accept_header
-                        probe_success = True
-                        logger.info(f"Successfully probed Accept header: {accept_header}")
-                        break
+                    with sess.get(wado_rs_url, headers={"Accept": accept_header}, stream=True, timeout=5) as r:
+                        if r.status_code == 200:
+                            probed_accept_header = accept_header
+                            probe_success = True
+                            logger.info(f"Successfully probed Accept header: {accept_header}")
+                            break
                 except Exception as e:
                     logger.debug(f"Probe with Accept header '{accept_header}' failed: {e}")
             
@@ -563,7 +622,7 @@ class StudyLoader:
                     )
                 )
 
-            max_workers = max(1, min(32, len(remaining_instances)))
+            max_workers = max(1, min(64, len(remaining_instances)))
             completed = 0
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = {executor.submit(download_single_task, item): item for item in remaining_instances}
@@ -641,6 +700,13 @@ class StudyLoader:
                     logger.info(f"Importing/updating study {target_study_uid} in Slicer DICOM database...")
                     if series_in_db:
                         db.removeStudy(target_study_uid)
+                    
+                    # Flatten and rename on the main thread to ensure absolute thread safety and high performance
+                    try:
+                        StudyLoader._flatten_and_rename_dicom_dir(cache_dir)
+                    except Exception as e:
+                        logger.warning(f"Failed to flatten DICOM directory: {e}")
+                        
                     DICOMUtils.importDicom(cache_dir)
                 else:
                     logger.info(f"Study {target_study_uid} is already indexed in Slicer DICOM database. Skipping import.")
