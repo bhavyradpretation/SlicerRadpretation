@@ -212,6 +212,34 @@ class StudiesWidget(qt.QWidget):
         config.load_with_seg = checked
         self.update_seg_toggle_style()
         logger.info(f"Load with segmentation toggled to: {checked}")
+        
+        # Identify the active study to reload
+        active_study = getattr(self, "current_loaded_study", None)
+        if not active_study:
+            # Fallback to lookup active_study_uid in all_studies
+            active_study_uid = None
+            widget_ref = None
+            if hasattr(slicer.modules, "radpretationtools"):
+                widget_ref = slicer.modules.radpretationtools
+            elif hasattr(slicer.modules, "RadpretationTools"):
+                widget_ref = slicer.modules.RadpretationTools
+            if widget_ref:
+                try:
+                    widget = widget_ref.widgetRepresentation().self()
+                    if hasattr(widget, "segmentation_service") and widget.segmentation_service:
+                        active_study_uid = widget.segmentation_service.active_study_uid
+                except Exception as e:
+                    logger.debug(f"Failed to check active study: {e}")
+
+            if active_study_uid:
+                for s in self.all_studies:
+                    if s.study_instance_uid == active_study_uid:
+                        active_study = s
+                        break
+
+        if active_study:
+            logger.info(f"Reloading active study {active_study.study_instance_uid} due to 'Load with Seg' toggle change.")
+            self.load_study(active_study, force=True)
 
     def update_seg_toggle_style(self):
         if self.seg_toggle_btn.isChecked():
@@ -308,30 +336,34 @@ class StudiesWidget(qt.QWidget):
     def load_study_at_row(self, row):
         if row < 0 or row >= len(self.studies):
             return
+        study = self.studies[row]
+        self.load_study(study, force=False)
+
+    def load_study(self, study, force=False):
         if getattr(self, "_study_loading", False):
             self.show_status("A study is already loading. Please wait...", error=False)
             return
 
-        study = self.studies[row]
-        
-        # Prevent redundant load if study is already active
-        widget_ref = None
-        if hasattr(slicer.modules, "radpretationtools"):
-            widget_ref = slicer.modules.radpretationtools
-        elif hasattr(slicer.modules, "RadpretationTools"):
-            widget_ref = slicer.modules.RadpretationTools
-        
-        if widget_ref:
-            try:
-                widget = widget_ref.widgetRepresentation().self()
-                if hasattr(widget, "segmentation_service") and widget.segmentation_service:
-                    if widget.segmentation_service.active_study_uid == study.study_instance_uid:
-                        self.show_status("Study is already loaded.", error=False)
-                        return
-            except Exception as e:
-                logger.debug(f"Failed to check active study: {e}")
+        # Prevent redundant load if study is already active (unless force=True)
+        if not force:
+            widget_ref = None
+            if hasattr(slicer.modules, "radpretationtools"):
+                widget_ref = slicer.modules.radpretationtools
+            elif hasattr(slicer.modules, "RadpretationTools"):
+                widget_ref = slicer.modules.RadpretationTools
+            
+            if widget_ref:
+                try:
+                    widget = widget_ref.widgetRepresentation().self()
+                    if hasattr(widget, "segmentation_service") and widget.segmentation_service:
+                        if widget.segmentation_service.active_study_uid == study.study_instance_uid:
+                            self.show_status("Study is already loaded.", error=False)
+                            return
+                except Exception as e:
+                    logger.debug(f"Failed to check active study: {e}")
 
         self._study_loading = True
+        self.current_loaded_study = study
         self.table.setEnabled(False)
 
         self.show_status(f"Loading {study.patient_name}...", error=False)
