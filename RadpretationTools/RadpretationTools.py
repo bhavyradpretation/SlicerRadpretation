@@ -152,16 +152,19 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             existing_container = segmentEditorWidget.findChild(qt.QWidget, "RadpretationSegmentEditorControls")
             if existing_container:
                 self.segmentEditorCreateBtn = existing_container.findChild(qt.QPushButton, "RadpretationCreateSegButton")
-                self.segmentEditorDeleteBtn = existing_container.findChild(qt.QPushButton, "RadpretationDeleteSegButton")
-                self.segmentEditorRenameBtn = existing_container.findChild(qt.QPushButton, "RadpretationRenameSegButton")
                 self.segmentEditorBackBtn = existing_container.findChild(qt.QPushButton, "RadpretationBackToRadButton")
                 self.segmentEditorSaveBtn = existing_container.findChild(qt.QPushButton, "RadpretationSaveSegButton")
                 
+                # Clean up legacy buttons if they exist
+                for btn_name in ["RadpretationDeleteSegButton", "RadpretationRenameSegButton"]:
+                    legacy_btn = existing_container.findChild(qt.QPushButton, btn_name)
+                    if legacy_btn:
+                        legacy_btn.hide()
+                        legacy_btn.deleteLater()
+
                 # Reconnect buttons to the current widget instance's callbacks
                 for btn, callback in [
                     (self.segmentEditorCreateBtn, self.onCreateSegClicked),
-                    (self.segmentEditorRenameBtn, self.onRenameSegClicked),
-                    (self.segmentEditorDeleteBtn, self.onDeleteSegClicked),
                     (self.segmentEditorBackBtn, self.onBackToRadpretationClicked),
                     (self.segmentEditorSaveBtn, self.onExportClicked),
                 ]:
@@ -188,7 +191,7 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             main_controls_layout.setContentsMargins(0, 10, 0, 5)
             main_controls_layout.setSpacing(10)
 
-            # Row 1: Segmentation Management Actions (Create, Delete, Rename)
+            # Row 1: Segmentation Management Actions (Create)
             row1_layout = qt.QHBoxLayout()
             row1_layout.setSpacing(8)
 
@@ -198,20 +201,6 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             self.segmentEditorCreateBtn.setToolTip("Create a new segmentation node (Limit: 1 active)")
             self.segmentEditorCreateBtn.connect("clicked()", self.onCreateSegClicked)
             row1_layout.addWidget(self.segmentEditorCreateBtn, 1)
-
-            # 2. Rename Button
-            self.segmentEditorRenameBtn = qt.QPushButton("✏ Rename")
-            self.segmentEditorRenameBtn.setObjectName("RadpretationRenameSegButton")
-            self.segmentEditorRenameBtn.setToolTip("Rename the active segmentation node")
-            self.segmentEditorRenameBtn.connect("clicked()", self.onRenameSegClicked)
-            row1_layout.addWidget(self.segmentEditorRenameBtn, 1)
-
-            # 3. Delete Button
-            self.segmentEditorDeleteBtn = qt.QPushButton("🗑 Delete")
-            self.segmentEditorDeleteBtn.setObjectName("RadpretationDeleteSegButton")
-            self.segmentEditorDeleteBtn.setToolTip("Delete the active segmentation node")
-            self.segmentEditorDeleteBtn.connect("clicked()", self.onDeleteSegClicked)
-            row1_layout.addWidget(self.segmentEditorDeleteBtn, 1)
 
             main_controls_layout.addLayout(row1_layout)
 
@@ -438,17 +427,6 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
                 self.segmentEditorCreateBtn.enabled = True
                 self.segmentEditorCreateBtn.setStyleSheet(PRIMARY_BUTTON)
 
-            if hasattr(self, "segmentEditorDeleteBtn") and self.segmentEditorDeleteBtn:
-                self.segmentEditorDeleteBtn.enabled = has_seg
-                self.segmentEditorDeleteBtn.setStyleSheet(
-                    DANGER_BUTTON if has_seg else DISABLED_BUTTON
-                )
-
-            if hasattr(self, "segmentEditorRenameBtn") and self.segmentEditorRenameBtn:
-                self.segmentEditorRenameBtn.enabled = has_seg
-                self.segmentEditorRenameBtn.setStyleSheet(
-                    SECONDARY_BUTTON if has_seg else DISABLED_BUTTON
-                )
             self.refreshSaveButtonState()
         except Exception as e:
             logger.error(f"Error updating Segment Editor buttons: {e}")
