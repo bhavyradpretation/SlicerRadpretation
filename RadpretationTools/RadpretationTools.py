@@ -250,9 +250,6 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
     def _connectSegmentEditorSegmentationSelector(self, segmentEditorWidget):
         """Connect Segment Editor's segmentation selector to our state."""
         try:
-            if getattr(self, "_segSelectorConnected", False):
-                return
-
             # Find the qMRMLNodeComboBox that selects a vtkMRMLSegmentationNode.
             selector = None
             try:
@@ -278,22 +275,30 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
                 logger.debug("Could not locate Segment Editor segmentation selector yet.")
                 return
 
-            # Keep a reference so it doesn't get GC'ed and so we can read it later if needed.
-            self._segmentEditorSegSelector = selector
-            try:
-                selector.disconnect("currentNodeChanged(vtkMRMLNode*)")
-            except Exception:
-                pass
-            selector.connect("currentNodeChanged(vtkMRMLNode*)", self.onEditorSegmentationNodeChanged)
-            self._segSelectorConnected = True
+            # If selector has changed or we haven't connected yet, connect it.
+            if not getattr(self, "_segSelectorConnected", False) or getattr(self, "_segmentEditorSegSelector", None) != selector:
+                old_selector = getattr(self, "_segmentEditorSegSelector", None)
+                if old_selector:
+                    try:
+                        old_selector.disconnect("currentNodeChanged(vtkMRMLNode*)")
+                    except Exception:
+                        pass
+                
+                self._segmentEditorSegSelector = selector
+                selector.connect("currentNodeChanged(vtkMRMLNode*)", self.onEditorSegmentationNodeChanged)
+                self._segSelectorConnected = True
+                logger.info("Connected Segment Editor segmentation selector to Radpretation state.")
 
-            # Immediately sync to current selection.
-            try:
-                self.onEditorSegmentationNodeChanged(selector.currentNode())
-            except Exception:
-                pass
-
-            logger.info("Connected Segment Editor segmentation selector to Radpretation state.")
+            # Always ensure the selector's current node matches our active segmentation node
+            active_node = self.segmentation_service.active_segmentation_node
+            if active_node and selector.currentNode() != active_node:
+                logger.info(f"Syncing selector currentNode to active segmentation node: {active_node.GetName()}")
+                try:
+                    # Temporarily block signals to avoid triggering onEditorSegmentationNodeChanged again recursively
+                    selector.blockSignals(True)
+                    selector.setCurrentNode(active_node)
+                finally:
+                    selector.blockSignals(False)
         except Exception as e:
             logger.debug(f"Failed to connect Segment Editor segmentation selector: {e}")
 
@@ -419,9 +424,15 @@ class RadpretationToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             existing_segs = slicer.util.getNodesByClass("vtkMRMLSegmentationNode")
             has_seg = len(existing_segs) > 0
             
-            # Keep segmentation service active node in sync if we didn't track it
-            if has_seg and not self.segmentation_service.active_segmentation_node:
-                self.segmentation_service.active_segmentation_node = list(existing_segs)[0]
+            # Keep segmentation service active node in sync with Segment Editor widget's actual selection
+            try:
+                segmentEditorWidget = slicer.modules.segmenteditor.widgetRepresentation()
+                if segmentEditorWidget:
+                    editor = segmentEditorWidget.self().editor
+                    if editor and editor.segmentationNode():
+                        self.segmentation_service.active_segmentation_node = editor.segmentationNode()
+            except Exception as e:
+                logger.debug(f"Could not read Segment Editor active node: {e}")
 
             if hasattr(self, "segmentEditorCreateBtn") and self.segmentEditorCreateBtn:
                 self.segmentEditorCreateBtn.enabled = True

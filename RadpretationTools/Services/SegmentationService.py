@@ -71,11 +71,26 @@ class SegmentationService:
             vol = self._get_reference_volume_for_segmentation(seg_node)
         slicer.util.selectModule("SegmentEditor")
         try:
-            editor = slicer.modules.segmenteditor.widgetRepresentation().self().editor
+            segmentEditorWidget = slicer.modules.segmenteditor.widgetRepresentation()
+            editor = segmentEditorWidget.self().editor
             if editor:
                 editor.setSegmentationNode(seg_node)
                 if vol:
                     editor.setSourceVolumeNode(vol)
+            
+            # Explicitly sync the node selector combobox in the Segment Editor widget
+            combos = segmentEditorWidget.findChildren(slicer.qMRMLNodeComboBox)
+            for cb in combos:
+                nodeTypes = getattr(cb, "nodeTypes", None)
+                if (nodeTypes and "vtkMRMLSegmentationNode" in list(nodeTypes)) or getattr(cb, "nodeType", None) == "vtkMRMLSegmentationNode":
+                    if cb.currentNode() != seg_node:
+                        try:
+                            # Temporarily block signals to avoid triggering currentNodeChanged handler redundantly
+                            cb.blockSignals(True)
+                            cb.setCurrentNode(seg_node)
+                        finally:
+                            cb.blockSignals(False)
+                    break
         except Exception as e:
             logger.warning(f"Could not configure Segment Editor: {e}")
 
