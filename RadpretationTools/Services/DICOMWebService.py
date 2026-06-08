@@ -85,6 +85,32 @@ class DICOMWebService:
             return []
 
     @staticmethod
+    def fetch_study_series_modalities(study_uid, auth_header=None):
+        """Fetch list of series UIDs and their modalities for a study."""
+        url = f"{config.dicomweb_endpoint}/studies/{study_uid}/series?includefield=00080060"
+        try:
+            kwargs = config.get_requests_kwargs()
+            if auth_header:
+                if 'headers' not in kwargs:
+                    kwargs['headers'] = {}
+                kwargs['headers']['Authorization'] = auth_header
+
+            response = requests.get(url, timeout=10, **kwargs)
+            response.raise_for_status()
+            series_json = response.json()
+            
+            series_modalities = {}
+            for s in series_json:
+                s_uid = DICOMWebService._get_dicom_value(s, "0020000E", "")
+                modality = DICOMWebService._get_dicom_value(s, "00080060", "")
+                if s_uid:
+                    series_modalities[s_uid] = modality.strip().upper()
+            return series_modalities
+        except Exception as e:
+            logger.error(f"Failed to fetch study series modalities for {study_uid}: {e}")
+            return {}
+
+    @staticmethod
     def download_instance(study_uid, series_uid, instance_uid, output_path, auth_header=None):
         """Download a single DICOM instance (WADO-URI)."""
         url = f"{config.orthanc_wado_uri}?requestType=WADO&studyUID={study_uid}&seriesUID={series_uid}&objectUID={instance_uid}&contentType=application/dicom"

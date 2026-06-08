@@ -142,6 +142,16 @@ class ConfigManager:
     def load_with_seg(self, value):
         self.settings.setValue("Radpretation/LoadWithSeg", "true" if value else "false")
 
+    @property
+    def bypass_cache_sync(self):
+        """Returns True if PACS synchronization check should be bypassed when loading complete study cache."""
+        val = self.settings.value("Radpretation/BypassCacheSync", "true")
+        return val == "true" or val is True
+
+    @bypass_cache_sync.setter
+    def bypass_cache_sync(self, value):
+        self.settings.setValue("Radpretation/BypassCacheSync", "true" if value else "false")
+
 LOCAL_BRIDGE_PORT = 5000
 
 config = ConfigManager.get_instance()

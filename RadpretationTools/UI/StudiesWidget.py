@@ -313,6 +313,24 @@ class StudiesWidget(qt.QWidget):
             return
 
         study = self.studies[row]
+        
+        # Prevent redundant load if study is already active
+        widget_ref = None
+        if hasattr(slicer.modules, "radpretationtools"):
+            widget_ref = slicer.modules.radpretationtools
+        elif hasattr(slicer.modules, "RadpretationTools"):
+            widget_ref = slicer.modules.RadpretationTools
+        
+        if widget_ref:
+            try:
+                widget = widget_ref.widgetRepresentation().self()
+                if hasattr(widget, "segmentation_service") and widget.segmentation_service:
+                    if widget.segmentation_service.active_study_uid == study.study_instance_uid:
+                        self.show_status("Study is already loaded.", error=False)
+                        return
+            except Exception as e:
+                logger.debug(f"Failed to check active study: {e}")
+
         self._study_loading = True
         self.table.setEnabled(False)
 

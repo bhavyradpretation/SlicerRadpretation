@@ -9,8 +9,9 @@ from Integrations.orthanc_client import OrthancClient
 from Utils.helpers import AsyncTaskRunner
 from Utils.logger import logger
 
-# Thread-local HTTP sessions keep connections warm across parallel instance fetches.
-_thread_local = threading.local()
+# Global shared requests session for Keep-Alive connection pooling
+_shared_session = None
+_session_lock = threading.Lock()
 
 
 def _orthanc_http_session(auth_header=None):
@@ -18,23 +19,22 @@ def _orthanc_http_session(auth_header=None):
     from requests.adapters import HTTPAdapter
     from urllib3.util.retry import Retry
     from Utils.config import config
+    global _shared_session
 
-    if not getattr(_thread_local, "session", None):
-        session = requests.Session()
-        retries = Retry(total=2, backoff_factor=0.2, status_forcelist=(502, 503, 504))
-        adapter = HTTPAdapter(pool_connections=128, pool_maxsize=128, max_retries=retries)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
+    with _session_lock:
+        if _shared_session is None:
+            session = requests.Session()
+            retries = Retry(total=2, backoff_factor=0.2, status_forcelist=(502, 503, 504))
+            adapter = HTTPAdapter(pool_connections=128, pool_maxsize=128, max_retries=retries)
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
 
-        kwargs = config.get_requests_kwargs()
-        if "auth" in kwargs:
-            session.auth = kwargs["auth"]
-
-        if auth_header:
-            session.headers.update({"Authorization": auth_header})
-
-        _thread_local.session = session
-    return _thread_local.session
+            kwargs = config.get_requests_kwargs()
+            if "auth" in kwargs:
+                session.auth = kwargs["auth"]
+            _shared_session = session
+            
+    return _shared_session
 
 
 class StudyLoader:
@@ -288,96 +288,69 @@ class StudyLoader:
             # --- CACHE PACS SYNC LOGIC ---
             if self._is_cache_complete(cache_root, study_uid):
                 from Utils.config import config
+                
+                # If load_with_seg is OFF, we bypass PACS sync completely and load instantly
                 if not getattr(config, "load_with_seg", True):
-                    logger.info(f"Study {study_uid} cache is complete. load_with_seg is disabled; bypassing PACS sync check.")
+                    logger.info(f"Study {study_uid} cache is complete. load_with_seg is OFF; bypassing PACS sync check.")
                     self.cache_manager.touch_cache(study_uid)
                     if progress_callback:
                         progress_callback(100, "Loading from cache...")
                     return {"cache_dir": self._resolve_import_dir(cache_root, study_uid), "newly_downloaded": False}
 
-                logger.info(f"Study {study_uid} cache is marked complete. Verifying sync with PACS...")
-                
-                # Fetch instance list from PACS to check if there are any updates/changes
-                if progress_callback:
-                    progress_callback(5, "Checking PACS for updates...")
-                
+                # If load_with_seg is ON, we check PACS specifically for missing SEG series/instances
+                logger.info(f"Study {study_uid} cache is complete. Checking PACS for new/missing segmentations...")
                 try:
-                    logger.info(f"Fetching instance list from PACS for {study_uid} to verify cache...")
+                    # Fetch series modalities from PACS (fast QIDO-RS metadata check)
+                    series_modalities = self.dicom_service.fetch_study_series_modalities(study_uid, auth_header=auth_header)
+                    seg_series_uids = [s_uid for s_uid, mod in series_modalities.items() if mod == "SEG"]
+                    
+                    if not seg_series_uids:
+                        logger.info(f"No segmentation series found on PACS for study {study_uid}. Loading instantly from cache.")
+                        self.cache_manager.touch_cache(study_uid)
+                        if progress_callback:
+                            progress_callback(100, "Loading from cache...")
+                        return {"cache_dir": self._resolve_import_dir(cache_root, study_uid), "newly_downloaded": False}
+                    
+                    # We have SEG series on PACS. Let's check if we have all their instances in our local cache
                     instance_map = self.dicom_service.fetch_all_study_instances(study_uid, auth_header=auth_header)
-                except Exception as pacs_err:
-                    logger.warning(f"Failed to fetch study instances from PACS for sync check: {pacs_err}. Falling back to cached data.")
-                    instance_map = None
-
-                if not instance_map:
-                    # If PACS fetch fails or returns empty (offline/error), fallback to existing cache to remain functional
-                    logger.warning("PACS fetch returned no instances or was offline. Falling back to cached copy.")
-                    self.cache_manager.touch_cache(study_uid)
-                    if progress_callback:
-                        progress_callback(100, "Loading from cache...")
-                    return {"cache_dir": self._resolve_import_dir(cache_root, study_uid), "newly_downloaded": False}
-
-                # PACS fetch succeeded, let's analyze local vs PACS files
-                resolve_dir = self._resolve_import_dir(cache_root, study_uid)
-                local_instances = self._get_local_cached_instances(resolve_dir)
-                pacs_uids = {inst_uid for _, inst_uid in instance_map}
-                
-                missing_uids = pacs_uids - set(local_instances.keys())
-                stale_uids = set(local_instances.keys()) - pacs_uids
-
-                if not missing_uids and not stale_uids:
-                    logger.info(f"Cache for study {study_uid} is perfectly in sync with PACS (total instances: {len(pacs_uids)}). Skipping download.")
-                    self.cache_manager.touch_cache(study_uid)
-                    if progress_callback:
-                        progress_callback(100, "Cache is up-to-date. Loading...")
-                    return {"cache_dir": resolve_dir, "newly_downloaded": False}
-
-                logger.info(f"Cache out of sync for study {study_uid}. Missing: {len(missing_uids)}, Stale: {len(stale_uids)}")
-                
-                # Since we are modifying the cache, remove the complete marker file first to prevent partial/broken reads
-                marker_file = self._marker_path(cache_root, study_uid)
-                legacy_marker = os.path.join(cache_root, study_uid, ".complete")
-                for marker in (marker_file, legacy_marker):
-                    if os.path.exists(marker):
-                        try:
-                            os.remove(marker)
-                        except Exception as e:
-                            logger.warning(f"Could not remove complete marker {marker}: {e}")
-
-                # Delete stale cached instances (e.g., deleted series/instances on PACS)
-                if stale_uids:
-                    logger.info(f"Deleting {len(stale_uids)} stale cached file(s) that are no longer on PACS...")
-                    for uid in stale_uids:
-                        path = local_instances[uid]
-                        try:
-                            os.remove(path)
-                            logger.debug(f"Deleted stale cached file: {path}")
-                        except Exception as e:
-                            logger.warning(f"Failed to delete stale file {path}: {e}")
-
-                # Download missing instances
-                if missing_uids:
-                    logger.info(f"Downloading {len(missing_uids)} missing instance(s) from PACS...")
-                    if progress_callback:
-                        progress_callback(10, f"Syncing {len(missing_uids)} new instances from PACS...")
+                    seg_instances = [(s_uid, inst_uid) for s_uid, inst_uid in instance_map if s_uid in seg_series_uids]
                     
-                    missing_instance_map = [(series_uid, inst_uid) for series_uid, inst_uid in instance_map if inst_uid in missing_uids]
+                    missing_seg_instances = []
+                    for s_uid, inst_uid in seg_instances:
+                        output_path = os.path.join(dicom_dir, f"{inst_uid}.dcm")
+                        if not os.path.exists(output_path):
+                            missing_seg_instances.append((s_uid, inst_uid))
                     
-                    # Ensure dicom_dir exists
-                    os.makedirs(dicom_dir, exist_ok=True)
+                    if not missing_seg_instances:
+                        logger.info(f"All PACS segmentation instances are already cached locally for study {study_uid}. Loading instantly.")
+                        self.cache_manager.touch_cache(study_uid)
+                        if progress_callback:
+                            progress_callback(100, "Loading from cache...")
+                        return {"cache_dir": self._resolve_import_dir(cache_root, study_uid), "newly_downloaded": False}
+
+                    # We have missing SEG instances! Download only those missing SEG slices in parallel
+                    logger.info(f"Downloading {len(missing_seg_instances)} missing segmentation slices from PACS...")
+                    if progress_callback:
+                        progress_callback(10, f"Syncing {len(missing_seg_instances)} new seg slices from PACS...")
                     
                     if self._download_instances_parallel(
-                        study_uid, dicom_dir, auth_header, progress_callback, instance_map=missing_instance_map
+                        study_uid, dicom_dir, auth_header, progress_callback, instance_map=missing_seg_instances
                     ):
-                        logger.info("Successfully synchronized cache by downloading missing instances.")
+                        logger.info("Successfully downloaded missing segmentation instances.")
+                        # Sync complete, we return newly_downloaded=True so Slicer DB imports the new files
+                        self._write_complete_marker(cache_root, study_uid)
+                        if progress_callback:
+                            progress_callback(100, "Synchronization complete.")
+                        return {"cache_dir": dicom_dir, "newly_downloaded": True}
                     else:
-                        logger.error("Failed to download missing instances to synchronize cache.")
-                        raise RuntimeError("Failed to download missing instances for cache synchronization.")
-
-                # Sync completed successfully, write the marker
-                self._write_complete_marker(cache_root, study_uid)
-                if progress_callback:
-                    progress_callback(100, "Synchronization complete.")
-                return {"cache_dir": dicom_dir, "newly_downloaded": True}
+                        raise RuntimeError("Failed to download missing segmentation instances.")
+                        
+                except Exception as pacs_err:
+                    logger.warning(f"Failed to check/sync PACS segmentations: {pacs_err}. Falling back to existing cache copy.")
+                    self.cache_manager.touch_cache(study_uid)
+                    if progress_callback:
+                        progress_callback(100, "Loading from cache...")
+                    return {"cache_dir": self._resolve_import_dir(cache_root, study_uid), "newly_downloaded": False}
             # -------------------------------------
 
             # If cache is not complete at all, proceed with a full study download
@@ -386,13 +359,15 @@ class StudyLoader:
             if progress_callback:
                 progress_callback(5, "Preparing download...")
 
-            # Try bulk Orthanc download FIRST as it is orders of magnitude faster than WADO-RS parallel
-            if self._try_orthanc_bulk_download(study_uid, dicom_dir, progress_callback):
-                logger.info("Bulk Orthanc archive download succeeded.")
-            elif self._download_instances_parallel(
+            # Try parallel WADO download FIRST as it is faster and bypasses zipping on the server (OHIF style)
+            download_strategy_used = "wado"
+            if self._download_instances_parallel(
                 study_uid, dicom_dir, auth_header, progress_callback
             ):
-                logger.info("Parallel WADO-RS download succeeded (bulk fallback).")
+                logger.info("Parallel WADO download succeeded.")
+            elif self._try_orthanc_bulk_download(study_uid, dicom_dir, progress_callback):
+                logger.info("Bulk Orthanc archive download succeeded (fallback).")
+                download_strategy_used = "zip"
             else:
                 logger.error("All download strategies failed.")
                 return None
@@ -402,6 +377,16 @@ class StudyLoader:
 
             if self._count_dcm_files(dicom_dir) == 0:
                 raise FileNotFoundError("No DICOM files found after download.")
+
+            # Flatten and rename in the background worker only if bulk ZIP download was used
+            if download_strategy_used == "zip":
+                try:
+                    import time
+                    start_flatten = time.time()
+                    StudyLoader._flatten_and_rename_dicom_dir(dicom_dir)
+                    logger.info(f"Background DICOM flattening/renaming took {time.time() - start_flatten:.2f} seconds.")
+                except Exception as e:
+                    logger.warning(f"Failed to flatten DICOM directory in background: {e}")
 
             self._write_complete_marker(cache_root, study_uid)
             if progress_callback:
@@ -428,9 +413,7 @@ class StudyLoader:
     def _download_instances_parallel(self, study_uid, dicom_dir, auth_header, progress_callback, instance_map=None):
         from Utils.config import config
         import concurrent.futures
-        from collections import defaultdict
-        import io
-        import pydicom
+        import time
 
         if instance_map is None:
             logger.info(f"Looking up instances for {study_uid} via QIDO-RS...")
@@ -440,201 +423,104 @@ class StudyLoader:
                 return False
 
         total_instances = len(instance_map)
-        logger.info(f"Total instances to stream: {total_instances}")
+        logger.info(f"Total instances to download in parallel: {total_instances}")
         if total_instances == 0:
             return True
+            
         if progress_callback:
-            progress_callback(10, f"Streaming {total_instances} instances from PACS...")
+            progress_callback(10, f"Preparing parallel download of {total_instances} slices...")
 
-        # Group instances by series_uid
-        series_groups = defaultdict(list)
+        # Find missing instances
+        missing_instances = []
         for series_uid, inst_uid in instance_map:
-            series_groups[series_uid].append(inst_uid)
+            output_path = os.path.join(dicom_dir, f"{inst_uid}.dcm")
+            if not os.path.exists(output_path):
+                missing_instances.append((series_uid, inst_uid))
 
-        # Check which instances are already cached
-        missing_series = {}
-        for s_uid, inst_uids in series_groups.items():
-            missing_uids = [uid for uid in inst_uids if not os.path.exists(os.path.join(dicom_dir, f"{uid}.dcm"))]
-            if missing_uids:
-                missing_series[s_uid] = missing_uids
-
-        if not missing_series:
+        if not missing_instances:
             logger.info("All instances are already cached locally.")
             return True
 
-        chunk_size = 256 * 1024
-        req_timeout = (15, 300)
+        logger.info(f"Downloading {len(missing_instances)} missing slices...")
+        
+        # We will use the thread-local HTTP session for connection pooling
+        session = _orthanc_http_session(auth_header)
 
-        # Phase 1: Try series-level retrieval
-        failed_series = set()
-        series_to_download = list(missing_series.keys())
+        # Smart Accept header probing for WADO-RS
+        probed_accept_header = "application/dicom"
 
-        def download_series_task(series_uid):
-            sess = _orthanc_http_session(auth_header)
-            wado_rs_url = f"{config.dicomweb_endpoint}/studies/{study_uid}/series/{series_uid}"
-            headers = {"Accept": 'multipart/related; type="application/dicom"'}
+        def download_single_slice(item):
+            s_uid, inst_uid = item
+            output_path = os.path.join(dicom_dir, f"{inst_uid}.dcm")
             
+            # 1. Try WADO-URI first (raw DICOM, no multipart/related overhead)
+            wado_uri_url = f"{config.orthanc_wado_uri}?requestType=WADO&studyUID={study_uid}&seriesUID={s_uid}&objectUID={inst_uid}&contentType=application/dicom"
             try:
-                logger.info(f"Attempting Retrieve Series WADO-RS: {wado_rs_url}")
-                with sess.get(wado_rs_url, headers=headers, stream=True, timeout=req_timeout) as r:
-                    r.raise_for_status()
-                    
-                    content_type = r.headers.get("Content-Type", "")
-                    boundary = ""
-                    for part in content_type.split(";"):
-                        if "boundary=" in part.lower():
-                            boundary = part.split("=")[1].strip().strip('"')
-                            break
-                    
-                    if not boundary:
-                        raise ValueError("No boundary found in Content-Type header for series retrieve")
-                    
-                    content = r.content
-                    parsed_count = 0
-                    for body in StudyLoader._parse_multipart_dicom(content, boundary):
-                        try:
-                            ds = pydicom.dcmread(io.BytesIO(body), stop_before_pixels=True)
-                            inst_uid = str(getattr(ds, "SOPInstanceUID", ""))
-                            if inst_uid:
-                                output_path = os.path.join(dicom_dir, f"{inst_uid}.dcm")
-                                with open(output_path, "wb") as f:
-                                    f.write(body)
-                                parsed_count += 1
-                        except Exception as parse_err:
-                            logger.warning(f"Error parsing instance in series {series_uid}: {parse_err}")
-                    
-                    if parsed_count > 0:
-                        logger.info(f"Successfully retrieved series {series_uid} (saved {parsed_count} instances)")
-                        return True
-                    else:
-                        raise ValueError(f"No valid DICOM parts parsed for series {series_uid}")
-            except Exception as e:
-                logger.warning(f"Retrieve Series for {series_uid} failed: {e}. Will fall back to instance-level download.")
-                return False
-
-        logger.info(f"Attempting series-level WADO-RS Retrieve for {len(series_to_download)} series...")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(32, len(series_to_download))) as executor:
-            future_to_series = {
-                executor.submit(download_series_task, s_uid): s_uid 
-                for s_uid in series_to_download
-            }
-            for future in concurrent.futures.as_completed(future_to_series):
-                s_uid = future_to_series[future]
-                try:
-                    if not future.result():
-                        failed_series.add(s_uid)
-                except Exception as exc:
-                    logger.error(f"Series retrieve future failed for {s_uid}: {exc}")
-                    failed_series.add(s_uid)
-
-        # Collect remaining missing instances
-        remaining_instances = []
-        for s_uid in failed_series:
-            for inst_uid in missing_series[s_uid]:
-                output_path = os.path.join(dicom_dir, f"{inst_uid}.dcm")
-                if not os.path.exists(output_path):
-                    remaining_instances.append((s_uid, inst_uid))
-
-        # Phase 2: Fallback single-instance parallel download with smart Accept header probing
-        if remaining_instances:
-            logger.info(f"Downloading {len(remaining_instances)} remaining instances via instance-level fallback...")
-            
-            probed_accept_header = None
-            probe_success = False
-            first_item = remaining_instances[0]
-            first_series_uid, first_inst_uid = first_item
-            
-            sess = _orthanc_http_session(auth_header)
-            wado_rs_url = (
-                f"{config.dicomweb_endpoint}/studies/{study_uid}"
-                f"/series/{first_series_uid}/instances/{first_inst_uid}"
-            )
-            
-            for accept_header in (
-                "application/dicom",
-                'multipart/related; type="application/dicom"',
-            ):
-                try:
-                    with sess.get(wado_rs_url, headers={"Accept": accept_header}, stream=True, timeout=5) as r:
-                        if r.status_code == 200:
-                            probed_accept_header = accept_header
-                            probe_success = True
-                            logger.info(f"Successfully probed Accept header: {accept_header}")
-                            break
-                except Exception as e:
-                    logger.debug(f"Probe with Accept header '{accept_header}' failed: {e}")
-            
-            if not probe_success:
-                probed_accept_header = "application/dicom"
-                logger.warning("Accept header probe failed. Defaulting to 'application/dicom'")
-
-            def download_single_task(item):
-                s_uid, inst_uid = item
-                output_path = os.path.join(dicom_dir, f"{inst_uid}.dcm")
-                if os.path.exists(output_path):
+                response = session.get(wado_uri_url, stream=True, timeout=15)
+                if response.status_code == 200:
+                    with open(output_path, "wb") as f:
+                        for chunk in response.iter_content(chunk_size=65536):
+                            f.write(chunk)
                     return True
+            except Exception as e:
+                logger.debug(f"WADO-URI failed for {inst_uid}: {e}")
 
-                sess = _orthanc_http_session(auth_header)
-                wado_rs_url = (
-                    f"{config.dicomweb_endpoint}/studies/{study_uid}"
-                    f"/series/{s_uid}/instances/{inst_uid}"
-                )
-
-                try:
-                    with sess.get(wado_rs_url, headers={"Accept": probed_accept_header}, stream=True, timeout=req_timeout) as r:
-                        if r.status_code == 200:
-                            content_type = r.headers.get("Content-Type", "")
-                            if "multipart/related" in content_type.lower():
-                                boundary = ""
-                                for part in content_type.split(";"):
-                                    if "boundary=" in part.lower():
-                                        boundary = part.split("=")[1].strip('"')
+            # 2. Try WADO-RS as fallback
+            wado_rs_url = f"{config.dicomweb_endpoint}/studies/{study_uid}/series/{s_uid}/instances/{inst_uid}"
+            try:
+                response = session.get(wado_rs_url, headers={"Accept": probed_accept_header}, stream=True, timeout=15)
+                if response.status_code == 200:
+                    content_type = response.headers.get("Content-Type", "")
+                    if "multipart/related" in content_type.lower():
+                        boundary = ""
+                        for part in content_type.split(";"):
+                            if "boundary=" in part.lower():
+                                boundary = part.split("=")[1].strip('"')
+                                break
+                        if boundary:
+                            content = response.content
+                            boundary_bytes = b"--" + boundary.encode()
+                            dicom_data = None
+                            for part in content.split(boundary_bytes):
+                                if b"application/dicom" in part.lower() or b"application/octet-stream" in part.lower():
+                                    idx = part.find(b"\r\n\r\n")
+                                    if idx != -1:
+                                        dicom_data = part[idx + 4 :]
+                                        if dicom_data.endswith(b"\r\n"):
+                                            dicom_data = dicom_data[:-2]
                                         break
-                                if boundary:
-                                    content = r.content
-                                    boundary_bytes = b"--" + boundary.encode()
-                                    dicom_data = None
-                                    for part in content.split(boundary_bytes):
-                                        if b"application/dicom" in part.lower() or b"application/octet-stream" in part.lower():
-                                            idx = part.find(b"\r\n\r\n")
-                                            if idx != -1:
-                                                dicom_data = part[idx + 4 :]
-                                                if dicom_data.endswith(b"\r\n"):
-                                                    dicom_data = dicom_data[:-2]
-                                                break
-                                    if dicom_data is not None:
-                                        with open(output_path, "wb") as f:
-                                            f.write(dicom_data)
-                                        return True
-                            
-                            with open(output_path, "wb") as f:
-                                for chunk in r.iter_content(chunk_size=chunk_size):
-                                    if chunk:
-                                        f.write(chunk)
-                            return True
-                except Exception as e:
-                    logger.debug(f"Instance download failed: {e}")
+                            if dicom_data is not None:
+                                with open(output_path, "wb") as f:
+                                    f.write(dicom_data)
+                                return True
+                    else:
+                        with open(output_path, "wb") as f:
+                            for chunk in response.iter_content(chunk_size=65536):
+                                f.write(chunk)
+                        return True
+            except Exception as e:
+                logger.debug(f"WADO-RS failed for {inst_uid}: {e}")
+            return False
 
-                # Last resort legacy WADO-URI
-                return bool(
-                    self.dicom_service.download_instance(
-                        study_uid, s_uid, inst_uid, output_path, auth_header=auth_header
-                    )
-                )
+        # Execute parallel downloads
+        completed = 0
+        # 32 workers is an excellent pool size for WADO-URI parallel downloads
+        max_workers = min(32, len(missing_instances))
+        
+        start_time = time.time()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(download_single_slice, item): item for item in missing_instances}
+            for future in concurrent.futures.as_completed(futures):
+                if not future.result():
+                    logger.error(f"Failed to download slice: {futures[future]}")
+                    return False
+                completed += 1
+                if progress_callback and completed % max(1, len(missing_instances) // 10) == 0:
+                    pct = 10 + int((completed / len(missing_instances)) * 85)
+                    progress_callback(pct, f"Streaming slices {completed}/{len(missing_instances)}...")
 
-            max_workers = max(1, min(64, len(remaining_instances)))
-            completed = 0
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {executor.submit(download_single_task, item): item for item in remaining_instances}
-                for future in concurrent.futures.as_completed(futures):
-                    if not future.result():
-                        raise RuntimeError(f"Failed to download instance {futures[future]}")
-                    completed += 1
-                    if progress_callback and completed % max(1, len(remaining_instances) // 15) == 0:
-                        progress = 10 + int((completed / len(remaining_instances)) * 80)
-                        progress_callback(progress, f"Streaming {completed}/{len(remaining_instances)}")
-
-        logger.info("WADO download complete.")
+        download_duration = time.time() - start_time
+        logger.info(f"Successfully downloaded {len(missing_instances)} slices in parallel in {download_duration:.2f} seconds.")
         return True
 
     @staticmethod
@@ -695,19 +581,14 @@ class StudyLoader:
                 series_in_db = db.seriesForStudy(target_study_uid)
                 
                 # If we have newly downloaded files, or the study is not in Slicer's DB,
-                # we need to remove the old study reference and import
+                # we need to import it.
                 if newly_downloaded or not series_in_db:
                     logger.info(f"Importing/updating study {target_study_uid} in Slicer DICOM database...")
-                    if series_in_db:
-                        db.removeStudy(target_study_uid)
-                    
-                    # Flatten and rename on the main thread to ensure absolute thread safety and high performance
-                    try:
-                        StudyLoader._flatten_and_rename_dicom_dir(cache_dir)
-                    except Exception as e:
-                        logger.warning(f"Failed to flatten DICOM directory: {e}")
-                        
+                    import time
+                    start_import = time.time()
+                    # We import using Slicer's utility which operates by reference (copyFiles=False by default)
                     DICOMUtils.importDicom(cache_dir)
+                    logger.info(f"Slicer DICOM database import took {time.time() - start_import:.2f} seconds.")
                 else:
                     logger.info(f"Study {target_study_uid} is already indexed in Slicer DICOM database. Skipping import.")
 

@@ -10,12 +10,19 @@ class OrthancClient:
     def __init__(self, base_url=None):
         self.base_url = (base_url or config.pacs_url).rstrip('/')
         self.req_kwargs = config.get_requests_kwargs()
+        
+        # Initialize a Session for connection pooling/keep-alive to improve performance
+        self.session = requests.Session()
+        if "auth" in self.req_kwargs:
+            self.session.auth = self.req_kwargs["auth"]
+        if "headers" in self.req_kwargs:
+            self.session.headers.update(self.req_kwargs["headers"])
 
     def fetch_studies(self):
         """Fetch all studies from Orthanc."""
         url = f"{self.base_url}/studies?expand"
         try:
-            response = requests.get(url, **self.req_kwargs)
+            response = self.session.get(url)
             response.raise_for_status()
             logger.info("Successfully fetched studies from Orthanc.")
             return response.json()
@@ -27,7 +34,7 @@ class OrthancClient:
         """Find the Orthanc internal ID for a DICOM StudyInstanceUID."""
         url = f"{self.base_url}/tools/lookup"
         try:
-            response = requests.post(url, data=study_instance_uid, **self.req_kwargs)
+            response = self.session.post(url, data=study_instance_uid)
             response.raise_for_status()
             results = response.json()
             for res in results:
@@ -42,13 +49,16 @@ class OrthancClient:
         """Download a study archive (ZIP) and extract DICOM files into target_dir."""
         import uuid
         import zipfile
+        import time
 
         url = f"{self.base_url}/studies/{study_id}/archive"
         zip_path = os.path.join(target_dir, f"{study_id}_{uuid.uuid4().hex}.zip")
         try:
             logger.info(f"Downloading study archive {study_id} from Orthanc (bulk ZIP)...")
             os.makedirs(target_dir, exist_ok=True)
-            with requests.get(url, stream=True, timeout=600, **self.req_kwargs) as r:
+            
+            start_download = time.time()
+            with self.session.get(url, stream=True, timeout=600) as r:
                 r.raise_for_status()
                 total = int(r.headers.get("Content-Length") or 0)
                 downloaded = 0
@@ -62,11 +72,47 @@ class OrthancClient:
                             pct = 10 + int((downloaded / total) * 75)
                             progress_callback(pct, "Downloading study archive...")
 
+            download_duration = time.time() - start_download
+            logger.info(f"Bulk ZIP download completed in {download_duration:.2f} seconds. Starting parallel extraction...")
+
             if progress_callback:
                 progress_callback(88, "Extracting study archive...")
 
+            start_extract = time.time()
+            
+            # Read ZIP info
             with zipfile.ZipFile(zip_path, "r") as zf:
-                zf.extractall(target_dir)
+                members = [m for m in zf.infolist() if not m.is_dir()]
+
+            # Pre-create all parent directories sequentially to prevent Windows directory creation race conditions
+            parent_dirs = set()
+            for member in members:
+                upperdir = os.path.dirname(os.path.join(target_dir, member.filename))
+                if upperdir:
+                    parent_dirs.add(upperdir)
+            for directory in sorted(parent_dirs, key=len):
+                os.makedirs(directory, exist_ok=True)
+
+            # Parallel extraction using a thread pool with independent ZipFile instances for thread-safety
+            import concurrent.futures
+            
+            def extract_member(member):
+                target_path = os.path.join(target_dir, member.filename)
+                try:
+                    with zipfile.ZipFile(zip_path, "r") as thread_zf:
+                        data = thread_zf.read(member)
+                    with open(target_path, "wb") as f:
+                        f.write(data)
+                except Exception as ex:
+                    logger.error(f"Failed to extract {member.filename}: {ex}")
+
+            # Using 8 workers is a good balance for SSD write speed and zlib decompression CPU utilization
+            max_workers = min(8, len(members)) if members else 1
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                list(executor.map(extract_member, members))
+
+            extract_duration = time.time() - start_extract
+            logger.info(f"Study archive extracted in {extract_duration:.2f} seconds.")
 
             try:
                 os.remove(zip_path)
@@ -76,7 +122,7 @@ class OrthancClient:
             logger.info(f"Study archive extracted to {target_dir}")
             return True
         except Exception as e:
-            logger.error(f"Failed to download study archive: {e}")
+            logger.error(f"Failed to download/extract study archive: {e}")
             try:
                 if os.path.exists(zip_path):
                     os.remove(zip_path)
@@ -91,7 +137,7 @@ class OrthancClient:
             with open(file_path, 'rb') as f:
                 data = f.read()
             headers = {'Content-Type': 'application/dicom'}
-            response = requests.post(url, data=data, headers=headers, **self.req_kwargs)
+            response = self.session.post(url, data=data, headers=headers)
             response.raise_for_status()
             logger.info(f"Successfully uploaded {file_path} to Orthanc.")
             return True
